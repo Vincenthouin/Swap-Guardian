@@ -1,25 +1,18 @@
 import { useEffect, useCallback } from "react";
 import type { UIMessage, PluginMessage } from "./types";
 
-/**
- * Send a message to the Figma plugin sandbox (code.ts).
- */
-export function postToPlugin(message: UIMessage) {
-  parent.postMessage({ pluginMessage: message }, "*");
+/** Send a typed message from UI → plugin sandbox */
+export function postToPlugin(msg: UIMessage) {
+  parent.postMessage({ pluginMessage: msg }, "*");
 }
 
-/**
- * Hook to listen for messages from the Figma plugin sandbox.
- * Automatically cleans up on unmount.
- */
-export function usePluginMessage(
-  handler: (message: PluginMessage) => void
-) {
+/** Listen for typed messages from plugin sandbox → UI */
+export function usePluginMessage(handler: (msg: PluginMessage) => void) {
   const stableHandler = useCallback(
     (event: MessageEvent) => {
       const msg = event.data?.pluginMessage;
-      if (msg) {
-        handler(msg);
+      if (msg && typeof msg.type === "string") {
+        handler(msg as PluginMessage);
       }
     },
     [handler]

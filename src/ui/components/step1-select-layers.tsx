@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import {
   Plus, Trash2, MousePointerClick, AlertCircle,
   Component, RefreshCw, ChevronRight, X, Layers,
@@ -6,6 +6,8 @@ import {
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { LayerIcon } from "./layer-icon";
+import { useI18n } from "./i18n";
+import { flattenLayers } from "./utils";
 import type { LayerItem, ComponentInfo } from "./types";
 
 interface Step1Props {
@@ -23,8 +25,15 @@ export function Step1SelectLayers({
   selectedComponent, selectedLayers, onLayersChange,
   isSelecting, selectionError, onRequestSelection, onClearComponent, onNext,
 }: Step1Props) {
+  const { t } = useI18n();
   const [editingLayerIndex, setEditingLayerIndex] = useState<number | null>(null);
   const [showLayerPicker, setShowLayerPicker] = useState(false);
+
+  // Flatten nested layers for the picker
+  const flatLayers = useMemo(
+    () => (selectedComponent ? flattenLayers(selectedComponent.layers) : []),
+    [selectedComponent]
+  );
 
   const handleAddLayer = useCallback(() => {
     setEditingLayerIndex(null);
@@ -71,36 +80,29 @@ export function Step1SelectLayers({
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-3.5">
         <div className="flex gap-2.5">
           <MousePointerClick className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-          <p className="text-xs text-blue-800">
-            Sélectionnez le composant que vous souhaitez mettre à jour (instances ou source), puis ajoutez les calques dont vous souhaitez conserver le contenu.
-          </p>
+          <p className="text-xs text-blue-800">{t("step1Instruction")}</p>
         </div>
       </div>
 
       {/* Component Selection */}
       <div>
-        <label className="text-xs text-neutral-500 mb-2 block">Composant source</label>
+        <label className="text-xs text-neutral-500 mb-2 block">{t("sourceComponent")}</label>
         {!selectedComponent ? (
           <button
             onClick={onRequestSelection}
             disabled={isSelecting}
             className="w-full border-2 border-dashed border-neutral-200 rounded-lg p-5 flex flex-col items-center gap-2.5 hover:border-neutral-300 hover:bg-neutral-50 transition-all cursor-pointer disabled:opacity-50"
           >
-            {isSelecting ? (
-              <>
-                <div className="w-8 h-8 rounded-full bg-neutral-100 flex items-center justify-center">
-                  <RefreshCw className="w-4 h-4 text-neutral-400 animate-spin" />
-                </div>
-                <span className="text-xs text-neutral-400">Lecture de la sélection Figma...</span>
-              </>
-            ) : (
-              <>
-                <div className="w-8 h-8 rounded-full bg-neutral-100 flex items-center justify-center">
-                  <Component className="w-4 h-4 text-neutral-400" />
-                </div>
-                <span className="text-xs text-neutral-400">Sélectionner le composant (ou une instance) dans Figma puis cliquez ici</span>
-              </>
-            )}
+            <div className="w-8 h-8 rounded-full bg-neutral-100 flex items-center justify-center">
+              {isSelecting ? (
+                <RefreshCw className="w-4 h-4 text-neutral-400 animate-spin" />
+              ) : (
+                <Component className="w-4 h-4 text-neutral-400" />
+              )}
+            </div>
+            <span className="text-xs text-neutral-400">
+              {isSelecting ? t("selectingComponent") : t("clickToSelect")}
+            </span>
           </button>
         ) : (
           <div className="border border-neutral-200 rounded-lg p-3.5 bg-white">
@@ -111,7 +113,9 @@ export function Step1SelectLayers({
                 </div>
                 <div>
                   <p className="text-sm text-neutral-900">{selectedComponent.name}</p>
-                  <p className="text-xs text-neutral-500">{selectedComponent.layers.length} layers détectés</p>
+                  <p className="text-xs text-neutral-500">
+                    {t("layersDetected", { count: flatLayers.length })}
+                  </p>
                 </div>
               </div>
               <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClearComponent}>
@@ -134,33 +138,55 @@ export function Step1SelectLayers({
       {selectedComponent && (
         <div>
           <div className="flex items-center justify-between mb-2">
-            <label className="text-xs text-neutral-500">Layers à conserver ({selectedLayers.length})</label>
+            <label className="text-xs text-neutral-500">
+              {t("layersToKeep")} ({selectedLayers.length})
+            </label>
           </div>
 
           {selectedLayers.length === 0 && !showLayerPicker && (
             <div className="border border-dashed border-neutral-200 rounded-lg p-4 flex flex-col items-center gap-2 text-center">
               <Layers className="w-5 h-5 text-neutral-300" />
-              <p className="text-xs text-neutral-400">Aucun layer ajouté. Utilisez le bouton ci-dessous.</p>
+              <p className="text-xs text-neutral-400">{t("noLayersYet")}</p>
             </div>
           )}
 
           {selectedLayers.length > 0 && (
             <div className="flex flex-col gap-1.5">
               {selectedLayers.map((layer, index) => (
-                <div key={`${layer.id}-${index}`} className="group flex items-center gap-2.5 p-2.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 transition-colors">
+                <div
+                  key={`${layer.id}-${index}`}
+                  className="group flex items-center gap-2.5 p-2.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 transition-colors"
+                >
                   <LayerIcon type={layer.type} />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-neutral-900 truncate">{layer.name}</p>
-                    <p className="text-xs text-neutral-400 truncate">
-                      {layer.type === "instance" ? layer.componentName : layer.type === "text" ? `"${layer.preview}"` : layer.type}
-                    </p>
+                    {layer.parentComponentName ? (
+                      <p className="text-[10px] text-violet-600 truncate">
+                        {t("inComponent")} {layer.parentComponentName}
+                        {layer.parentInstanceName ? ` (${layer.parentInstanceName})` : ""}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-neutral-400 truncate">
+                        {layer.type === "instance"
+                          ? layer.componentName
+                          : layer.type === "text"
+                            ? `"${layer.preview}"`
+                            : layer.type}
+                      </p>
+                    )}
                   </div>
-                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">{layer.type}</Badge>
+                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">
+                    {layer.type}
+                  </Badge>
                   <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                     <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleEditLayer(index)}>
                       <RefreshCw className="w-3 h-3" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-6 w-6 text-red-500 hover:text-red-600" onClick={() => handleRemoveLayer(index)}>
+                    <Button
+                      variant="ghost" size="icon"
+                      className="h-6 w-6 text-red-500 hover:text-red-600"
+                      onClick={() => handleRemoveLayer(index)}
+                    >
                       <Trash2 className="w-3 h-3" />
                     </Button>
                   </div>
@@ -169,14 +195,14 @@ export function Step1SelectLayers({
             </div>
           )}
 
-          {/* Layer Picker — affiche les VRAIS layers du composant */}
+          {/* Layer Picker — uses flattenLayers for nested support */}
           {showLayerPicker && (
             <div className="mt-2 border border-blue-200 rounded-lg bg-blue-50/50 overflow-hidden">
               <div className="px-3 py-2 bg-blue-100/60 border-b border-blue-200 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <MousePointerClick className="w-3.5 h-3.5 text-blue-600" />
                   <span className="text-xs text-blue-800">
-                    {editingLayerIndex !== null ? "Sélectionner le nouveau layer" : "Choisir un layer à conserver"}
+                    {editingLayerIndex !== null ? t("selectNewLayer") : t("chooseLayer")}
                   </span>
                 </div>
                 <Button variant="ghost" size="icon" className="h-5 w-5" onClick={handleCancelPicker}>
@@ -184,17 +210,20 @@ export function Step1SelectLayers({
                 </Button>
               </div>
               <div className="p-2 flex flex-col gap-0.5 max-h-48 overflow-y-auto">
-                {selectedComponent.layers.length === 0 && (
-                  <p className="text-xs text-neutral-400 p-2 text-center">Aucun layer exploitable trouvé dans ce composant.</p>
+                {flatLayers.length === 0 && (
+                  <p className="text-xs text-neutral-400 p-2 text-center">{t("noLayersInComp")}</p>
                 )}
-                {selectedComponent.layers.map((layer) => {
+                {flatLayers.map((layer) => {
                   const isAlreadySelected = selectedLayers.some((l) => l.id === layer.id);
+                  const isNested = !!layer.parentInstanceName;
                   return (
                     <button
                       key={layer.id}
                       onClick={() => handlePickLayer(layer)}
                       disabled={isAlreadySelected && editingLayerIndex === null}
                       className={`flex items-center gap-2.5 p-2 rounded-md text-left transition-colors ${
+                        isNested ? "pl-7" : ""
+                      } ${
                         isAlreadySelected && editingLayerIndex === null
                           ? "opacity-40 cursor-not-allowed"
                           : "hover:bg-blue-100 cursor-pointer"
@@ -202,9 +231,17 @@ export function Step1SelectLayers({
                     >
                       <LayerIcon type={layer.type} />
                       <span className="text-sm text-neutral-900 flex-1 truncate">{layer.name}</span>
+                      {layer.parentComponentName && (
+                        <Badge
+                          variant="secondary"
+                          className="text-[10px] px-1.5 py-0 shrink-0 bg-violet-50 text-violet-600 border-violet-200"
+                        >
+                          {t("inComponent")} {layer.parentComponentName}
+                        </Badge>
+                      )}
                       <span className="text-[10px] text-neutral-400">{layer.type}</span>
                       {isAlreadySelected && editingLayerIndex === null && (
-                        <span className="text-[10px] text-blue-500">ajouté</span>
+                        <span className="text-[10px] text-blue-500">{t("added")}</span>
                       )}
                     </button>
                   );
@@ -214,10 +251,10 @@ export function Step1SelectLayers({
           )}
 
           {/* Add button */}
-          {!showLayerPicker && selectedComponent.layers.length > 0 && (
+          {!showLayerPicker && flatLayers.length > 0 && (
             <Button variant="outline" size="sm" className="mt-2 w-full" onClick={handleAddLayer}>
               <Plus className="w-3.5 h-3.5" />
-              Ajouter un layer
+              {t("addLayer")}
             </Button>
           )}
         </div>
@@ -226,7 +263,7 @@ export function Step1SelectLayers({
       {/* Next button */}
       <div className="pt-2 border-t border-neutral-200">
         <Button className="w-full" onClick={onNext} disabled={selectedLayers.length === 0}>
-          Étape suivante
+          {t("next")}
           <ChevronRight className="w-4 h-4" />
         </Button>
       </div>
