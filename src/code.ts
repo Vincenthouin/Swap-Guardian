@@ -1,25 +1,25 @@
 figma.showUI(__html__, { width: 400, height: 600 });
 
 // ─── Types ──────────────────────────────────────────────
+
+type LayerType = "text" | "instance" | "frame" | "image" | "vector";
+
 interface LayerInfo {
   id: string;
   name: string;
-  type: "text" | "instance" | "frame" | "image" | "vector";
+  type: LayerType;
   preview?: string;
   componentName?: string;
+  path: string[];
+  indexPath: number[];
+  children?: LayerInfo[];
 }
 
 interface ComponentInfo {
   id: string;
   name: string;
+  componentKey: string;
   layers: LayerInfo[];
-}
-
-interface MappingData {
-  id: string;
-  sourceLayerName: string;
-  targetLayerName: string;
-  sourceLayerType: string;
 }
 
 interface ChildFillOverride {
@@ -29,91 +29,135 @@ interface ChildFillOverride {
   hasImage: boolean;
 }
 
-// ─── Helpers ────────────────────────────────────────────
+// ─── Layer Tree Builder ─────────────────────────────────
+// Frames are TRANSPARENT for name path (don't add their name),
+// but ARE tracked in indexPath (structural position).
+// Instances add their name to both path AND indexPath.
 
-function extractLayers(node: ComponentNode): LayerInfo[] {
+function collectLayers(
+  node: SceneNode,
+  parentPath: string[],
+  parentIndexPath: number[],
+  childIndex: number,
+  result: LayerInfo[]
+): void {
+  var myIndexPath = parentIndexPath.concat([childIndex]);
+
+  // TEXT
+  if (node.type === "TEXT") {
+    result.push({
+      id: node.id,
+      name: node.name,
+      type: "text",
+      preview: (node as TextNode).characters.substring(0, 50),
+      path: parentPath.concat([node.name]),
+      indexPath: myIndexPath,
+    });
+    return;
+  }
+
+  // INSTANCE — include AND recurse into children
+  if (node.type === "INSTANCE") {
+    var inst = node as InstanceNode;
+    var compName = inst.mainComponent ? inst.mainComponent.name : "Inconnu";
+    var myPath = parentPath.concat([node.name]);
+    var item: LayerInfo = {
+      id: node.id,
+      name: node.name,
+      type: "instance",
+      componentName: compName,
+      path: myPath,
+      indexPath: myIndexPath,
+    };
+    if ("children" in inst && inst.children.length > 0) {
+      var children: LayerInfo[] = [];
+      for (var i = 0; i < inst.children.length; i++) {
+        collectLayers(inst.children[i], myPath, myIndexPath, i, children);
+      }
+      if (children.length > 0) item.children = children;
+    }
+    result.push(item);
+    return;
+  }
+
+  // RECTANGLE / ELLIPSE — only include if has image fill
+  if (node.type === "RECTANGLE" || node.type === "ELLIPSE") {
+    if ("fills" in node) {
+      var fills = node.fills as readonly Paint[];
+      for (var j = 0; j < fills.length; j++) {
+        if (fills[j].type === "IMAGE") {
+          result.push({
+            id: node.id,
+            name: node.name,
+            type: "image",
+            path: parentPath.concat([node.name]),
+            indexPath: myIndexPath,
+          });
+          return;
+        }
+      }
+    }
+    return;
+  }
+
+  // VECTOR types
+  if (
+    node.type === "VECTOR" ||
+    node.type === "STAR" ||
+    node.type === "POLYGON" ||
+    node.type === "LINE" ||
+    node.type === "BOOLEAN_OPERATION"
+  ) {
+    result.push({
+      id: node.id,
+      name: node.name,
+      type: "vector",
+      path: parentPath.concat([node.name]),
+      indexPath: myIndexPath,
+    });
+    return;
+  }
+
+  // FRAME / GROUP — transparent for name path, tracked in indexPath
+  if (node.type === "FRAME" || node.type === "GROUP") {
+    if ("fills" in node) {
+      var frameFills = node.fills as readonly Paint[];
+      for (var k = 0; k < frameFills.length; k++) {
+        if (frameFills[k].type === "IMAGE") {
+          result.push({
+            id: node.id,
+            name: node.name,
+            type: "image",
+            path: parentPath.concat([node.name]),
+            indexPath: myIndexPath,
+          });
+          return;
+        }
+      }
+    }
+    // ★ Frames transparentes pour le name path, mais indexPath les traverse
+    if ("children" in node) {
+      var kids = (node as FrameNode).children;
+      for (var c = 0; c < kids.length; c++) {
+        collectLayers(kids[c], parentPath, myIndexPath, c, result);
+      }
+    }
+  }
+}
+
+function buildComponentLayers(
+  node: ComponentNode | InstanceNode
+): LayerInfo[] {
   var layers: LayerInfo[] = [];
-
-  function traverse(child: SceneNode) {
-    if (child.type === "TEXT") {
-      layers.push({
-        id: child.id,
-        name: child.name,
-        type: "text",
-        preview: (child as TextNode).characters.substring(0, 50),
-      });
-      return;
-    }
-
-    if (child.type === "INSTANCE") {
-      var inst = child as InstanceNode;
-      var compName = inst.mainComponent ? inst.mainComponent.name : "Inconnu";
-      layers.push({
-        id: child.id,
-        name: child.name,
-        type: "instance",
-        componentName: compName,
-      });
-      return;
-    }
-
-    if (child.type === "RECTANGLE" || child.type === "ELLIPSE") {
-      if ("fills" in child) {
-        var fills = child.fills as readonly Paint[];
-        var hasImage = false;
-        for (var i = 0; i < fills.length; i++) {
-          if (fills[i].type === "IMAGE") {
-            hasImage = true;
-            break;
-          }
-        }
-        if (hasImage) {
-          layers.push({ id: child.id, name: child.name, type: "image" });
-          return;
-        }
-      }
-    }
-
-    if (
-      child.type === "VECTOR" ||
-      child.type === "STAR" ||
-      child.type === "POLYGON" ||
-      child.type === "LINE"
-    ) {
-      layers.push({ id: child.id, name: child.name, type: "vector" });
-      return;
-    }
-
-    if (child.type === "FRAME" || child.type === "GROUP") {
-      if ("fills" in child) {
-        var frameFills = child.fills as readonly Paint[];
-        var frameHasImage = false;
-        for (var j = 0; j < frameFills.length; j++) {
-          if (frameFills[j].type === "IMAGE") {
-            frameHasImage = true;
-            break;
-          }
-        }
-        if (frameHasImage) {
-          layers.push({ id: child.id, name: child.name, type: "image" });
-          return;
-        }
-      }
-      if ("children" in child) {
-        var kids = (child as FrameNode).children;
-        for (var k = 0; k < kids.length; k++) {
-          traverse(kids[k]);
-        }
-      }
+  if ("children" in node) {
+    for (var i = 0; i < node.children.length; i++) {
+      collectLayers(node.children[i], [], [], i, layers);
     }
   }
-
-  for (var c = 0; c < node.children.length; c++) {
-    traverse(node.children[c]);
-  }
-
   return layers;
 }
+
+// ─── Helpers ────────────────────────────────────────────
 
 function getMainComponent(node: SceneNode): ComponentNode | null {
   if (node.type === "COMPONENT") return node;
@@ -130,13 +174,146 @@ function getPage(node: BaseNode): PageNode | null {
   return null;
 }
 
-function findLayerByName(parent: SceneNode, name: string): SceneNode | null {
+/**
+ * Find a node by its structural index path.
+ * MOST RELIABLE: works even when nested components have been overridden (name changed).
+ * indexPath = [3] means root.children[3]
+ * indexPath = [0, 2] means root.children[0].children[2]
+ */
+function findNodeByIndexPath(
+  root: SceneNode,
+  indexPath: number[]
+): SceneNode | null {
+  var current: SceneNode = root;
+  for (var i = 0; i < indexPath.length; i++) {
+    if (!("children" in current)) return null;
+    var children = (current as any).children as SceneNode[];
+    if (indexPath[i] < 0 || indexPath[i] >= children.length) return null;
+    current = children[indexPath[i]];
+  }
+  return current;
+}
+
+/**
+ * Deep search by name (reliable fallback).
+ */
+function findLayerByName(
+  parent: SceneNode,
+  name: string
+): SceneNode | null {
   if (!("findOne" in parent)) return null;
   return (parent as FrameNode | ComponentNode | InstanceNode).findOne(
     function (n) {
       return n.name === name;
     }
   );
+}
+
+/**
+ * Find a node by structural name path.
+ */
+function findNodeByPath(
+  root: SceneNode,
+  path: string[]
+): SceneNode | null {
+  var current: SceneNode = root;
+  for (var i = 0; i < path.length; i++) {
+    if (!("children" in current)) return null;
+    var children = (current as any).children as SceneNode[];
+    var found: SceneNode | null = null;
+    for (var j = 0; j < children.length; j++) {
+      if (children[j].name === path[i]) {
+        found = children[j];
+        break;
+      }
+    }
+    if (!found) return null;
+    current = found;
+  }
+  return current;
+}
+
+/**
+ * Smart node finder for SOURCE (before swap):
+ * 1. indexPath (most reliable — works with overrides)
+ * 2. name path
+ * 3. deep name search
+ */
+function findSourceNode(
+  root: SceneNode,
+  indexPath: number[],
+  namePath: string[],
+  label: string
+): SceneNode | null {
+  // Strategy 1: indexPath (structural position — always correct)
+  if (indexPath && indexPath.length > 0) {
+    var byIndex = findNodeByIndexPath(root, indexPath);
+    if (byIndex) {
+      console.log(
+        "[SG]   [" + label + "] '" + byIndex.name +
+        "' trouvé par indexPath [" + indexPath.join(",") + "]"
+      );
+      return byIndex;
+    }
+  }
+
+  // Strategy 2: name path
+  var byPath = findNodeByPath(root, namePath);
+  if (byPath) return byPath;
+
+  // Strategy 3: deep name search
+  var name = namePath[namePath.length - 1];
+  var byName = findLayerByName(root, name);
+  if (byName) {
+    console.log(
+      "[SG]   [" + label + "] '" + name +
+      "' pas trouvé par indexPath/path, TROUVÉ par recherche profonde"
+    );
+  }
+  return byName;
+}
+
+/**
+ * Smart node finder for TARGET (after swap):
+ * Uses name-based search (no overrides exist on freshly swapped instance).
+ * 1. name path
+ * 2. deep name search
+ * 3. indexPath as last resort
+ */
+function findTargetNode(
+  root: SceneNode,
+  namePath: string[],
+  indexPath: number[],
+  label: string
+): SceneNode | null {
+  // Strategy 1: name path
+  var byPath = findNodeByPath(root, namePath);
+  if (byPath) return byPath;
+
+  // Strategy 2: deep name search
+  var name = namePath[namePath.length - 1];
+  var byName = findLayerByName(root, name);
+  if (byName) {
+    console.log(
+      "[SG]   [" + label + "] target '" + name +
+      "' pas trouvé par path, TROUVÉ par recherche profonde"
+    );
+    return byName;
+  }
+
+  // Strategy 3: indexPath fallback
+  if (indexPath && indexPath.length > 0) {
+    var byIndex = findNodeByIndexPath(root, indexPath);
+    if (byIndex) {
+      console.log(
+        "[SG]   [" + label + "] target trouvé par indexPath [" +
+        indexPath.join(",") + "] → '" + byIndex.name + "'"
+      );
+    }
+    return byIndex;
+  }
+
+  return null;
 }
 
 async function loadFontsForText(textNode: TextNode): Promise<void> {
@@ -156,41 +333,7 @@ async function loadFontsForText(textNode: TextNode): Promise<void> {
   }
 }
 
-// ─── Path-based node finding (NOUVEAU) ───────────────────
-
-/**
- * Trouve le chemin (tableau d'indices enfants) vers un node nommé dans un arbre.
- * Ex: si "il_morning_portrait" est le 1er enfant du 2ème enfant de root → [1, 0]
- */
-function getPathToNamedNode(root: SceneNode, targetName: string): number[] | null {
-  if (root.name === targetName) return [];
-  if (!("children" in root)) return null;
-  var children = (root as any).children as SceneNode[];
-  for (var i = 0; i < children.length; i++) {
-    var sub = getPathToNamedNode(children[i], targetName);
-    if (sub !== null) {
-      return [i].concat(sub);
-    }
-  }
-  return null;
-}
-
-/**
- * Suit un chemin d'indices pour retrouver un node dans un arbre.
- * Fonctionne même si les noms ont changé (swap de composant imbriqué).
- */
-function getNodeByPath(root: SceneNode, path: number[]): SceneNode | null {
-  var current: SceneNode = root;
-  for (var i = 0; i < path.length; i++) {
-    if (!("children" in current)) return null;
-    var children = (current as any).children as SceneNode[];
-    if (path[i] >= children.length) return null;
-    current = children[path[i]];
-  }
-  return current;
-}
-
-// ─── Image-fill helpers ─────────────────────────────────
+// ─── Image / Fill helpers ───────────────────────────────
 
 function findDescendantWithImageFill(node: SceneNode): SceneNode | null {
   if (!("children" in node)) return null;
@@ -239,21 +382,6 @@ function getImageHash(fills: Paint[]): string {
   return "n/a";
 }
 
-function readCurrentImageHash(node: SceneNode): string {
-  if (!("fills" in node)) return "pas-de-fills";
-  var fills = (node as GeometryMixin).fills;
-  if (fills === figma.mixed) return "mixed";
-  var arr = fills as readonly Paint[];
-  for (var i = 0; i < arr.length; i++) {
-    if (arr[i].type === "IMAGE") {
-      return (arr[i] as any).imageHash || "AUCUN";
-    }
-  }
-  return "pas-d-image";
-}
-
-// ─── Collect / Apply child fills ─────────────────────────
-
 function collectChildFills(node: SceneNode): ChildFillOverride[] {
   var results: ChildFillOverride[] = [];
 
@@ -293,7 +421,6 @@ function collectChildFills(node: SceneNode): ChildFillOverride[] {
       traverse(children[c]);
     }
   }
-
   return results;
 }
 
@@ -301,7 +428,7 @@ function applyChildFills(
   node: SceneNode,
   overrides: ChildFillOverride[],
   preserveColors: boolean,
-  instanceLabel: string
+  label: string
 ): void {
   var imageOverrides: ChildFillOverride[] = [];
   var colorOverrides: ChildFillOverride[] = [];
@@ -318,7 +445,6 @@ function applyChildFills(
 
   for (var i = 0; i < imageOverrides.length; i++) {
     var override = imageOverrides[i];
-
     var fillsToApply: Paint[];
     if (!preserveColors) {
       fillsToApply = [];
@@ -332,27 +458,17 @@ function applyChildFills(
     }
     if (fillsToApply.length === 0) continue;
 
-    var savedHash = getImageHash(fillsToApply);
-
-    // Stratégie 1 : match par nom
     var target = findLayerByName(node, override.name);
-
-    // Stratégie 2 : fallback
     if (!target || usedTargetIds[(target as any).id]) {
       target = findBestImageTarget(node);
     }
-
     if (target && "fills" in target) {
       try {
         (target as GeometryMixin).fills = fillsToApply;
         usedTargetIds[(target as any).id] = true;
-        var hashApres = readCurrentImageHash(target);
-        console.log("[CS]     [" + instanceLabel + "] Fill appliqué sur '" + (target as any).name + "' | hash: " + savedHash + " → " + hashApres);
       } catch (e) {
-        console.log("[CS]     [" + instanceLabel + "] ❌ Erreur fill:", e);
+        console.log("[SG] [" + label + "] Erreur fill:", e);
       }
-    } else {
-      console.log("[CS]     [" + instanceLabel + "] ❌ Aucun target trouvé pour fill image");
     }
   }
 
@@ -383,7 +499,7 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
         type: "selection-result",
         component: null,
         error:
-          "Aucun élément sélectionné. Sélectionnez une instance ou un composant dans le canvas, puis réessayez.",
+          "Aucun élément sélectionné. Sélectionnez une instance ou un composant dans le canvas.",
       });
       return;
     }
@@ -399,12 +515,16 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
       return;
     }
 
-    var layers = extractLayers(mainComp);
+    var layerSource =
+      selection[0].type === "INSTANCE" ? selection[0] : mainComp;
+    var layers = buildComponentLayers(layerSource as any);
+
     figma.ui.postMessage({
       type: "selection-result",
       component: {
         id: mainComp.id,
         name: mainComp.name,
+        componentKey: mainComp.key,
         layers: layers,
       } as ComponentInfo,
     });
@@ -435,59 +555,103 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
       return;
     }
 
-    var newLayers = extractLayers(newMain);
+    var newLayerSource =
+      sel[0].type === "INSTANCE" ? sel[0] : newMain;
+    var newLayers = buildComponentLayers(newLayerSource as any);
+
     figma.ui.postMessage({
       type: "new-component-result",
       component: {
         id: newMain.id,
         name: newMain.name,
+        componentKey: newMain.key,
         layers: newLayers,
       } as ComponentInfo,
     });
   }
 
+  // ── Focus sur un node ──
+  if (msg.type === "focus-node" && msg.nodeId) {
+    var focusNode = await figma.getNodeByIdAsync(msg.nodeId);
+    if (
+      focusNode &&
+      focusNode.type !== "DOCUMENT" &&
+      focusNode.type !== "PAGE"
+    ) {
+      var sceneNode = focusNode as SceneNode;
+      var nodePage = getPage(sceneNode);
+      if (nodePage && figma.currentPage !== nodePage) {
+        await figma.setCurrentPageAsync(nodePage);
+      }
+      figma.currentPage.selection = [sceneNode];
+      figma.viewport.scrollAndZoomIntoView([sceneNode]);
+    }
+  }
+
   // ── Lancer la conversion ──
   if (msg.type === "run-conversion") {
-    var oldComponentId: string = msg.oldComponentId;
-    var newComponentId: string = msg.newComponentId;
-    var mappings: MappingData[] = msg.mappings;
-    var scope: string = msg.scope;
+    var oldComponentKey: string = msg.oldComponentKey;
+    var newComponentKey: string = msg.newComponentKey;
     var preserveColors: boolean =
       msg.preserveColors !== undefined ? msg.preserveColors : true;
+    var mappings: {
+      id: string;
+      sourcePath: string[];
+      sourceIndexPath: number[];
+      targetPath: string[];
+      targetIndexPath: number[];
+      layerType: string;
+    }[] = msg.mappings;
+    var scope: string = msg.scope;
 
-    console.log("[CS] === DÉBUT CONVERSION ===");
-    console.log("[CS] preserveColors:", preserveColors);
+    console.log("[SG] === DÉBUT CONVERSION ===");
+    console.log("[SG] oldKey:", oldComponentKey, "newKey:", newComponentKey);
+    console.log("[SG] scope:", scope, "preserveColors:", preserveColors);
+    console.log("[SG] mappings:", mappings.length);
 
     try {
-      var oldComp = (await figma.getNodeByIdAsync(
-        oldComponentId
-      )) as ComponentNode | null;
-      var newComp = (await figma.getNodeByIdAsync(
-        newComponentId
-      )) as ComponentNode | null;
+      // ── Resolve new component: try import by key, fallback to local search ──
+      var newComp: ComponentNode | null = null;
 
-      if (!oldComp || !newComp) {
+      try {
+        newComp = await figma.importComponentByKeyAsync(newComponentKey);
+        console.log("[SG] New component imported by key:", newComp.name);
+      } catch (importErr) {
+        console.log("[SG] importByKey failed, searching locally...");
+        for (var pi = 0; pi < figma.root.children.length; pi++) {
+          var searchPage = figma.root.children[pi];
+          var comps = searchPage.findAllWithCriteria({ types: ["COMPONENT"] });
+          for (var ci = 0; ci < comps.length; ci++) {
+            if (comps[ci].key === newComponentKey) {
+              newComp = comps[ci];
+              break;
+            }
+          }
+          if (newComp) break;
+        }
+      }
+
+      if (!newComp) {
         figma.ui.postMessage({
           type: "conversion-error",
           error:
-            "Impossible de retrouver un des composants. Il a peut-être été supprimé.",
+            "Impossible de retrouver le nouveau composant. Vérifiez qu'il est présent dans le fichier ou publié en librairie.",
         });
         return;
       }
 
-      // ── Pré-calculer les chemins pour chaque mapping ──
-      // Ça permet de retrouver un node par POSITION si le nom a changé
-      var mappingPaths: Record<string, number[] | null> = {};
-      for (var mp = 0; mp < mappings.length; mp++) {
-        var pathResult = getPathToNamedNode(oldComp, mappings[mp].sourceLayerName);
-        mappingPaths[mappings[mp].id] = pathResult;
-        console.log("[CS] Chemin pour '" + mappings[mp].sourceLayerName + "':", pathResult ? pathResult.join(" → ") : "NON TROUVÉ dans le composant");
+      // ── Find all instances of old component by KEY ──
+      var pagesToSearch =
+        scope === "page"
+          ? [figma.currentPage]
+          : figma.root.children;
+
+      interface InstanceInfo {
+        node: InstanceNode;
+        pageName: string;
       }
 
-      var pagesToSearch =
-        scope === "page" ? [figma.currentPage] : figma.root.children;
-
-      var instances: InstanceNode[] = [];
+      var instances: InstanceInfo[] = [];
       for (var p = 0; p < pagesToSearch.length; p++) {
         var page = pagesToSearch[p];
         var found = page.findAllWithCriteria({ types: ["INSTANCE"] });
@@ -495,15 +659,15 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
           var inst = found[f];
           if (
             inst.mainComponent &&
-            inst.mainComponent.id === oldComponentId
+            inst.mainComponent.key === oldComponentKey
           ) {
-            instances.push(inst);
+            instances.push({ node: inst, pageName: page.name });
           }
         }
       }
 
       var totalInstances = instances.length;
-      console.log("[CS] Instances trouvées:", totalInstances);
+      console.log("[SG] Instances trouvées:", totalInstances);
 
       if (totalInstances === 0) {
         figma.ui.postMessage({
@@ -529,67 +693,77 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
       var pageStats: Record<string, number> = {};
 
       for (var i = 0; i < instances.length; i++) {
-        var instance = instances[i];
-        var instancePage = getPage(instance);
-        var pageName = instancePage ? instancePage.name : "Inconnue";
+        var instance = instances[i].node;
+        var pageName = instances[i].pageName;
         var label = "#" + i;
 
         try {
+          console.log(
+            "[SG] ── Instance " + label + " '" + instance.name + "' ──"
+          );
+
           // ──────────────────────────────────────────────
-          // 1. LIRE le contenu AVANT le swap
+          // 1. READ content BEFORE swap
           // ──────────────────────────────────────────────
           var savedContent: Record<
             string,
             {
               type: string;
               value: any;
+              compId?: string | null;
               directFills?: Paint[] | null;
               childFills?: ChildFillOverride[];
             }
           > = {};
 
-          console.log("[CS] ── Instance " + label + " '" + instance.name + "' ──");
-
           for (var m = 0; m < mappings.length; m++) {
             var mapping = mappings[m];
 
-            // ── TROUVER LE SOURCE NODE ──
-            // Stratégie 1: par nom (rapide)
-            var sourceNode = findLayerByName(instance, mapping.sourceLayerName);
-
-            // Stratégie 2: par chemin structurel (si le nom a changé, ex: swap de composant imbriqué)
-            if (!sourceNode) {
-              var savedPath = mappingPaths[mapping.id];
-              if (savedPath) {
-                sourceNode = getNodeByPath(instance, savedPath);
-                if (sourceNode) {
-                  console.log("[CS]   [" + label + "] '" + mapping.sourceLayerName + "' pas trouvé par nom, TROUVÉ par chemin → " + sourceNode.type + " '" + sourceNode.name + "'");
-                }
-              }
-            }
+            // ★ Find source node: indexPath FIRST, then name fallback
+            var sourceNode = findSourceNode(
+              instance,
+              mapping.sourceIndexPath,
+              mapping.sourcePath,
+              label
+            );
 
             if (!sourceNode) {
-              console.log("[CS]   [" + label + "] '" + mapping.sourceLayerName + "': NULL ❌ (ni par nom, ni par chemin)");
+              console.log(
+                "[SG]   [" + label + "] source [" +
+                mapping.sourcePath.join(" → ") + "] indexPath [" +
+                (mapping.sourceIndexPath || []).join(",") +
+                "]: NON TROUVÉ"
+              );
               continue;
             }
 
-            // Texte
+            // ── Text ──
             if (
               sourceNode.type === "TEXT" &&
-              mapping.sourceLayerType === "text"
+              mapping.layerType === "text"
             ) {
               savedContent[mapping.id] = {
                 type: "text",
                 value: (sourceNode as TextNode).characters,
               };
+              console.log(
+                "[SG]   [" + label + "] TEXT '" + sourceNode.name +
+                "' = \"" +
+                (sourceNode as TextNode).characters.substring(0, 30) +
+                "\""
+              );
             }
-            // Instance imbriquée
+            // ── Instance (nested component) ──
             else if (
               sourceNode.type === "INSTANCE" &&
-              mapping.sourceLayerType === "instance"
+              mapping.layerType === "instance"
             ) {
               var nestedInst = sourceNode as InstanceNode;
-              var compId = nestedInst.mainComponent
+              // ★ Save BOTH key AND id for maximum compatibility
+              var nestedKey = nestedInst.mainComponent
+                ? nestedInst.mainComponent.key
+                : null;
+              var nestedId = nestedInst.mainComponent
                 ? nestedInst.mainComponent.id
                 : null;
 
@@ -605,23 +779,22 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
               }
 
               var cFills = collectChildFills(nestedInst);
-              var cHash = "aucun";
-              for (var cf = 0; cf < cFills.length; cf++) {
-                if (cFills[cf].hasImage) {
-                  cHash = getImageHash(cFills[cf].fills);
-                }
-              }
-              console.log("[CS]   [" + label + "] Instance '" + sourceNode.name + "' comp:" + compId + " | childFills:" + cFills.length + " | imageHash: " + cHash);
+              console.log(
+                "[SG]   [" + label + "] INSTANCE '" + sourceNode.name +
+                "' key:" + nestedKey + " id:" + nestedId +
+                " | childFills:" + cFills.length
+              );
 
               savedContent[mapping.id] = {
                 type: "instance",
-                value: compId,
+                value: nestedKey,
+                compId: nestedId,
                 directFills: instDirectFills,
                 childFills: cFills,
               };
             }
-            // Image directe
-            else if (mapping.sourceLayerType === "image") {
+            // ── Image ──
+            else if (mapping.layerType === "image") {
               var directFills: Paint[] | null = null;
               if ("fills" in sourceNode) {
                 var rawFills = (sourceNode as GeometryMixin).fills;
@@ -629,11 +802,13 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
                   directFills = JSON.parse(JSON.stringify(rawFills));
                 }
               }
-
-              var dHash = directFills ? getImageHash(directFills) : "null";
-              console.log("[CS]   [" + label + "] Image directe '" + sourceNode.name + "' | imageHash: " + dHash);
-
               var cFills2 = collectChildFills(sourceNode);
+
+              console.log(
+                "[SG]   [" + label + "] IMAGE '" + sourceNode.name +
+                "' | hash: " +
+                (directFills ? getImageHash(directFills) : "null")
+              );
 
               savedContent[mapping.id] = {
                 type: "fills",
@@ -641,13 +816,16 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
                 childFills: cFills2,
               };
             }
-            // Fallback : si le type ne matche pas (ex: le sourceLayerType est "instance"
-            // mais le node trouvé par chemin est un RECTANGLE avec une image)
+            // ── Fallback: type mismatch — collect fills anyway ──
             else if (
-              mapping.sourceLayerType === "instance" &&
+              mapping.layerType === "instance" &&
               sourceNode.type !== "INSTANCE"
             ) {
-              console.log("[CS]   [" + label + "] Type mismatch: attendu INSTANCE, trouvé " + sourceNode.type + " — on collecte les fills quand même");
+              console.log(
+                "[SG]   [" + label +
+                "] Type mismatch: attendu INSTANCE, trouvé " +
+                sourceNode.type + " — on collecte les fills"
+              );
               var fallbackFills: Paint[] | null = null;
               if ("fills" in sourceNode) {
                 var fbRaw = (sourceNode as GeometryMixin).fills;
@@ -664,62 +842,103 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
           }
 
           // ──────────────────────────────────────────────
-          // 2. SWAP
+          // 2. SWAP component
           // ──────────────────────────────────────────────
           instance.swapComponent(newComp);
-          console.log("[CS]   [" + label + "] SWAP → " + newComp.name);
+          console.log("[SG]   [" + label + "] SWAP → " + newComp.name);
 
           // ──────────────────────────────────────────────
-          // 3. RÉ-APPLIQUER
+          // 3. RE-APPLY content (using target paths/indexPaths)
           // ──────────────────────────────────────────────
           for (var m2 = 0; m2 < mappings.length; m2++) {
             var map = mappings[m2];
             var content = savedContent[map.id];
             if (!content) continue;
 
-            // Trouver le target — d'abord par nom, puis par chemin dans le NOUVEAU composant
-            var targetNode = findLayerByName(instance, map.targetLayerName);
-            if (!targetNode) {
-              var targetPath = getPathToNamedNode(newComp, map.targetLayerName);
-              if (targetPath) {
-                targetNode = getNodeByPath(instance, targetPath);
-              }
-            }
+            // ★ Find target node: name-based first (reliable after fresh swap),
+            //   indexPath as fallback
+            var targetNode = findTargetNode(
+              instance,
+              map.targetPath,
+              map.targetIndexPath,
+              label
+            );
 
             if (!targetNode) {
-              console.log("[CS]   [" + label + "] Target '" + map.targetLayerName + "': NULL ❌");
+              console.log(
+                "[SG]   [" + label + "] Target [" +
+                map.targetPath.join(" → ") + "]: NON TROUVÉ"
+              );
               continue;
             }
 
-            // ── Texte ──
+            // ── Text ──
             if (content.type === "text" && targetNode.type === "TEXT") {
               await loadFontsForText(targetNode as TextNode);
               (targetNode as TextNode).characters = content.value;
+              console.log(
+                "[SG]   [" + label + "] ✅ TEXT → '" + targetNode.name + "'"
+              );
             }
 
-            // ── Instance imbriquée ──
+            // ── Instance (nested component) ──
             else if (content.type === "instance") {
               if (
-                content.value &&
+                (content.value || content.compId) &&
                 targetNode.type === "INSTANCE"
               ) {
                 var targetInst = targetNode as InstanceNode;
-                var currentCompId = targetInst.mainComponent
-                  ? targetInst.mainComponent.id
+                var currentKey = targetInst.mainComponent
+                  ? targetInst.mainComponent.key
                   : null;
 
-                if (currentCompId !== content.value) {
-                  var comp = (await figma.getNodeByIdAsync(
-                    content.value
-                  )) as ComponentNode | null;
-                  if (comp && comp.type === "COMPONENT") {
-                    targetInst.swapComponent(comp);
-                    console.log("[CS]   [" + label + "] ✅ Sous-composant swappé vers " + comp.name);
+                // Only swap if the component is different
+                if (currentKey !== content.value) {
+                  var nestedComp: ComponentNode | null = null;
+
+                  // ★ Strategy 1: import by KEY (works for published/library)
+                  if (content.value) {
+                    try {
+                      nestedComp =
+                        await figma.importComponentByKeyAsync(content.value);
+                    } catch (e) {
+                      console.log(
+                        "[SG]   [" + label +
+                        "] importByKey échoué pour nested, fallback ID"
+                      );
+                    }
+                  }
+
+                  // ★ Strategy 2: get by ID (works for local components)
+                  if (!nestedComp && content.compId) {
+                    var byId = await figma.getNodeByIdAsync(content.compId);
+                    if (byId && byId.type === "COMPONENT") {
+                      nestedComp = byId as ComponentNode;
+                    }
+                  }
+
+                  if (nestedComp) {
+                    targetInst.swapComponent(nestedComp);
+                    console.log(
+                      "[SG]   [" + label +
+                      "] ✅ Sous-composant swappé → " + nestedComp.name
+                    );
+                  } else {
+                    console.log(
+                      "[SG]   [" + label +
+                      "] ⚠️ Nested component introuvable (key:" +
+                      content.value + " id:" + content.compId + ")"
+                    );
                   }
                 }
               }
 
-              if (content.directFills && content.directFills.length > 0 && "fills" in targetNode) {
+              // Apply direct fills
+              if (
+                content.directFills &&
+                content.directFills.length > 0 &&
+                "fills" in targetNode
+              ) {
                 try {
                   (targetNode as GeometryMixin).fills = content.directFills;
                 } catch (e) {
@@ -727,17 +946,26 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
                 }
               }
 
+              // Apply child fills (images + optionally colors)
               if (content.childFills && content.childFills.length > 0) {
-                applyChildFills(targetNode, content.childFills, preserveColors, label);
+                applyChildFills(
+                  targetNode,
+                  content.childFills,
+                  preserveColors,
+                  label
+                );
               }
             }
 
-            // ── Image directe (ou fallback depuis instance) ──
+            // ── Image / Fills ──
             else if (content.type === "fills") {
               if (content.value && "fills" in targetNode) {
                 try {
                   (targetNode as GeometryMixin).fills = content.value;
-                  console.log("[CS]   [" + label + "] ✅ Fills directs appliqués sur '" + targetNode.name + "'");
+                  console.log(
+                    "[SG]   [" + label + "] ✅ Fills → '" +
+                    targetNode.name + "'"
+                  );
                 } catch (e) {
                   // Ignorer
                 }
@@ -747,7 +975,7 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
                 applyChildFills(targetNode, content.childFills, true, label);
               }
 
-              // Fallback : si target est une INSTANCE, appliquer dans son enfant image
+              // Fallback: if target is INSTANCE, apply image to child
               if (content.value && targetNode.type === "INSTANCE") {
                 var hasImageFill = false;
                 for (var fi = 0; fi < content.value.length; fi++) {
@@ -761,7 +989,11 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
                   if (imgTarget && "fills" in imgTarget) {
                     try {
                       (imgTarget as GeometryMixin).fills = content.value;
-                      console.log("[CS]   [" + label + "] ✅ Fallback fill image dans '" + (imgTarget as any).name + "'");
+                      console.log(
+                        "[SG]   [" + label +
+                        "] ✅ Fallback image → '" +
+                        (imgTarget as any).name + "'"
+                      );
                     } catch (e) {
                       // Ignorer
                     }
@@ -774,7 +1006,7 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
           converted++;
           pageStats[pageName] = (pageStats[pageName] || 0) + 1;
         } catch (err: any) {
-          console.log("[CS] ❌ ERREUR sur " + label + ":", err);
+          console.log("[SG] ❌ ERREUR sur " + label + ":", err);
           failedInstances.push({
             id: instance.id,
             name: instance.name,
@@ -783,13 +1015,19 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
           });
         }
 
+        // Send progress
         figma.ui.postMessage({
           type: "conversion-progress",
           progress: Math.round(((i + 1) / totalInstances) * 100),
+          current: i + 1,
+          total: totalInstances,
         });
       }
 
-      console.log("[CS] === FIN: " + converted + "/" + totalInstances + " converties ===");
+      console.log(
+        "[SG] === FIN: " + converted + "/" + totalInstances +
+        " converties ==="
+      );
 
       var pages: { name: string; count: number }[] = [];
       for (var pName in pageStats) {
@@ -809,7 +1047,7 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
         },
       });
     } catch (err: any) {
-      console.log("[CS] ❌ ERREUR GLOBALE:", err);
+      console.log("[SG] ❌ ERREUR GLOBALE:", err);
       figma.ui.postMessage({
         type: "conversion-error",
         error:
@@ -817,24 +1055,6 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
             ? err.message
             : "Erreur inattendue lors de la conversion.",
       });
-    }
-  }
-
-  // ── Focus sur un node ──
-  if (msg.type === "focus-node" && msg.nodeId) {
-    var focusNode = await figma.getNodeByIdAsync(msg.nodeId);
-    if (
-      focusNode &&
-      focusNode.type !== "DOCUMENT" &&
-      focusNode.type !== "PAGE"
-    ) {
-      var sceneNode = focusNode as SceneNode;
-      var nodePage = getPage(sceneNode);
-      if (nodePage && figma.currentPage !== nodePage) {
-        await figma.setCurrentPageAsync(nodePage);
-      }
-      figma.currentPage.selection = [sceneNode];
-      figma.viewport.scrollAndZoomIntoView([sceneNode]);
     }
   }
 };

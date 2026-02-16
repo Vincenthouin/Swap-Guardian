@@ -2,74 +2,99 @@
 (() => {
   // src/code.ts
   figma.showUI(__html__, { width: 400, height: 600 });
-  function extractLayers(node) {
-    var layers = [];
-    function traverse(child) {
-      if (child.type === "TEXT") {
-        layers.push({
-          id: child.id,
-          name: child.name,
-          type: "text",
-          preview: child.characters.substring(0, 50)
-        });
-        return;
+  function collectLayers(node, parentPath, parentIndexPath, childIndex, result) {
+    var myIndexPath = parentIndexPath.concat([childIndex]);
+    if (node.type === "TEXT") {
+      result.push({
+        id: node.id,
+        name: node.name,
+        type: "text",
+        preview: node.characters.substring(0, 50),
+        path: parentPath.concat([node.name]),
+        indexPath: myIndexPath
+      });
+      return;
+    }
+    if (node.type === "INSTANCE") {
+      var inst = node;
+      var compName = inst.mainComponent ? inst.mainComponent.name : "Inconnu";
+      var myPath = parentPath.concat([node.name]);
+      var item = {
+        id: node.id,
+        name: node.name,
+        type: "instance",
+        componentName: compName,
+        path: myPath,
+        indexPath: myIndexPath
+      };
+      if ("children" in inst && inst.children.length > 0) {
+        var children = [];
+        for (var i = 0; i < inst.children.length; i++) {
+          collectLayers(inst.children[i], myPath, myIndexPath, i, children);
+        }
+        if (children.length > 0) item.children = children;
       }
-      if (child.type === "INSTANCE") {
-        var inst = child;
-        var compName = inst.mainComponent ? inst.mainComponent.name : "Inconnu";
-        layers.push({
-          id: child.id,
-          name: child.name,
-          type: "instance",
-          componentName: compName
-        });
-        return;
-      }
-      if (child.type === "RECTANGLE" || child.type === "ELLIPSE") {
-        if ("fills" in child) {
-          var fills = child.fills;
-          var hasImage = false;
-          for (var i = 0; i < fills.length; i++) {
-            if (fills[i].type === "IMAGE") {
-              hasImage = true;
-              break;
-            }
-          }
-          if (hasImage) {
-            layers.push({ id: child.id, name: child.name, type: "image" });
+      result.push(item);
+      return;
+    }
+    if (node.type === "RECTANGLE" || node.type === "ELLIPSE") {
+      if ("fills" in node) {
+        var fills = node.fills;
+        for (var j = 0; j < fills.length; j++) {
+          if (fills[j].type === "IMAGE") {
+            result.push({
+              id: node.id,
+              name: node.name,
+              type: "image",
+              path: parentPath.concat([node.name]),
+              indexPath: myIndexPath
+            });
             return;
           }
         }
       }
-      if (child.type === "VECTOR" || child.type === "STAR" || child.type === "POLYGON" || child.type === "LINE") {
-        layers.push({ id: child.id, name: child.name, type: "vector" });
-        return;
-      }
-      if (child.type === "FRAME" || child.type === "GROUP") {
-        if ("fills" in child) {
-          var frameFills = child.fills;
-          var frameHasImage = false;
-          for (var j = 0; j < frameFills.length; j++) {
-            if (frameFills[j].type === "IMAGE") {
-              frameHasImage = true;
-              break;
-            }
-          }
-          if (frameHasImage) {
-            layers.push({ id: child.id, name: child.name, type: "image" });
+      return;
+    }
+    if (node.type === "VECTOR" || node.type === "STAR" || node.type === "POLYGON" || node.type === "LINE" || node.type === "BOOLEAN_OPERATION") {
+      result.push({
+        id: node.id,
+        name: node.name,
+        type: "vector",
+        path: parentPath.concat([node.name]),
+        indexPath: myIndexPath
+      });
+      return;
+    }
+    if (node.type === "FRAME" || node.type === "GROUP") {
+      if ("fills" in node) {
+        var frameFills = node.fills;
+        for (var k = 0; k < frameFills.length; k++) {
+          if (frameFills[k].type === "IMAGE") {
+            result.push({
+              id: node.id,
+              name: node.name,
+              type: "image",
+              path: parentPath.concat([node.name]),
+              indexPath: myIndexPath
+            });
             return;
           }
         }
-        if ("children" in child) {
-          var kids = child.children;
-          for (var k = 0; k < kids.length; k++) {
-            traverse(kids[k]);
-          }
+      }
+      if ("children" in node) {
+        var kids = node.children;
+        for (var c = 0; c < kids.length; c++) {
+          collectLayers(kids[c], parentPath, myIndexPath, c, result);
         }
       }
     }
-    for (var c = 0; c < node.children.length; c++) {
-      traverse(node.children[c]);
+  }
+  function buildComponentLayers(node) {
+    var layers = [];
+    if ("children" in node) {
+      for (var i = 0; i < node.children.length; i++) {
+        collectLayers(node.children[i], [], [], i, layers);
+      }
     }
     return layers;
   }
@@ -86,6 +111,16 @@
     }
     return null;
   }
+  function findNodeByIndexPath(root, indexPath) {
+    var current = root;
+    for (var i = 0; i < indexPath.length; i++) {
+      if (!("children" in current)) return null;
+      var children = current.children;
+      if (indexPath[i] < 0 || indexPath[i] >= children.length) return null;
+      current = children[indexPath[i]];
+    }
+    return current;
+  }
   function findLayerByName(parent, name) {
     if (!("findOne" in parent)) return null;
     return parent.findOne(
@@ -93,6 +128,66 @@
         return n.name === name;
       }
     );
+  }
+  function findNodeByPath(root, path) {
+    var current = root;
+    for (var i = 0; i < path.length; i++) {
+      if (!("children" in current)) return null;
+      var children = current.children;
+      var found = null;
+      for (var j = 0; j < children.length; j++) {
+        if (children[j].name === path[i]) {
+          found = children[j];
+          break;
+        }
+      }
+      if (!found) return null;
+      current = found;
+    }
+    return current;
+  }
+  function findSourceNode(root, indexPath, namePath, label) {
+    if (indexPath && indexPath.length > 0) {
+      var byIndex = findNodeByIndexPath(root, indexPath);
+      if (byIndex) {
+        console.log(
+          "[SG]   [" + label + "] '" + byIndex.name + "' trouv\xE9 par indexPath [" + indexPath.join(",") + "]"
+        );
+        return byIndex;
+      }
+    }
+    var byPath = findNodeByPath(root, namePath);
+    if (byPath) return byPath;
+    var name = namePath[namePath.length - 1];
+    var byName = findLayerByName(root, name);
+    if (byName) {
+      console.log(
+        "[SG]   [" + label + "] '" + name + "' pas trouv\xE9 par indexPath/path, TROUV\xC9 par recherche profonde"
+      );
+    }
+    return byName;
+  }
+  function findTargetNode(root, namePath, indexPath, label) {
+    var byPath = findNodeByPath(root, namePath);
+    if (byPath) return byPath;
+    var name = namePath[namePath.length - 1];
+    var byName = findLayerByName(root, name);
+    if (byName) {
+      console.log(
+        "[SG]   [" + label + "] target '" + name + "' pas trouv\xE9 par path, TROUV\xC9 par recherche profonde"
+      );
+      return byName;
+    }
+    if (indexPath && indexPath.length > 0) {
+      var byIndex = findNodeByIndexPath(root, indexPath);
+      if (byIndex) {
+        console.log(
+          "[SG]   [" + label + "] target trouv\xE9 par indexPath [" + indexPath.join(",") + "] \u2192 '" + byIndex.name + "'"
+        );
+      }
+      return byIndex;
+    }
+    return null;
   }
   async function loadFontsForText(textNode) {
     var fontName = textNode.fontName;
@@ -109,28 +204,6 @@
     } else {
       await figma.loadFontAsync(fontName);
     }
-  }
-  function getPathToNamedNode(root, targetName) {
-    if (root.name === targetName) return [];
-    if (!("children" in root)) return null;
-    var children = root.children;
-    for (var i = 0; i < children.length; i++) {
-      var sub = getPathToNamedNode(children[i], targetName);
-      if (sub !== null) {
-        return [i].concat(sub);
-      }
-    }
-    return null;
-  }
-  function getNodeByPath(root, path) {
-    var current = root;
-    for (var i = 0; i < path.length; i++) {
-      if (!("children" in current)) return null;
-      var children = current.children;
-      if (path[i] >= children.length) return null;
-      current = children[path[i]];
-    }
-    return current;
   }
   function findDescendantWithImageFill(node) {
     if (!("children" in node)) return null;
@@ -175,18 +248,6 @@
     }
     return "n/a";
   }
-  function readCurrentImageHash(node) {
-    if (!("fills" in node)) return "pas-de-fills";
-    var fills = node.fills;
-    if (fills === figma.mixed) return "mixed";
-    var arr = fills;
-    for (var i = 0; i < arr.length; i++) {
-      if (arr[i].type === "IMAGE") {
-        return arr[i].imageHash || "AUCUN";
-      }
-    }
-    return "pas-d-image";
-  }
   function collectChildFills(node) {
     var results = [];
     function traverse(child) {
@@ -226,7 +287,7 @@
     }
     return results;
   }
-  function applyChildFills(node, overrides, preserveColors, instanceLabel) {
+  function applyChildFills(node, overrides, preserveColors, label) {
     var imageOverrides = [];
     var colorOverrides = [];
     for (var i = 0; i < overrides.length; i++) {
@@ -251,7 +312,6 @@
         fillsToApply = override.fills;
       }
       if (fillsToApply.length === 0) continue;
-      var savedHash = getImageHash(fillsToApply);
       var target = findLayerByName(node, override.name);
       if (!target || usedTargetIds[target.id]) {
         target = findBestImageTarget(node);
@@ -260,13 +320,9 @@
         try {
           target.fills = fillsToApply;
           usedTargetIds[target.id] = true;
-          var hashApres = readCurrentImageHash(target);
-          console.log("[CS]     [" + instanceLabel + "] Fill appliqu\xE9 sur '" + target.name + "' | hash: " + savedHash + " \u2192 " + hashApres);
         } catch (e) {
-          console.log("[CS]     [" + instanceLabel + "] \u274C Erreur fill:", e);
+          console.log("[SG] [" + label + "] Erreur fill:", e);
         }
-      } else {
-        console.log("[CS]     [" + instanceLabel + "] \u274C Aucun target trouv\xE9 pour fill image");
       }
     }
     if (preserveColors) {
@@ -289,7 +345,7 @@
         figma.ui.postMessage({
           type: "selection-result",
           component: null,
-          error: "Aucun \xE9l\xE9ment s\xE9lectionn\xE9. S\xE9lectionnez une instance ou un composant dans le canvas, puis r\xE9essayez."
+          error: "Aucun \xE9l\xE9ment s\xE9lectionn\xE9. S\xE9lectionnez une instance ou un composant dans le canvas."
         });
         return;
       }
@@ -302,12 +358,14 @@
         });
         return;
       }
-      var layers = extractLayers(mainComp);
+      var layerSource = selection[0].type === "INSTANCE" ? selection[0] : mainComp;
+      var layers = buildComponentLayers(layerSource);
       figma.ui.postMessage({
         type: "selection-result",
         component: {
           id: mainComp.id,
           name: mainComp.name,
+          componentKey: mainComp.key,
           layers
         }
       });
@@ -331,43 +389,65 @@
         });
         return;
       }
-      var newLayers = extractLayers(newMain);
+      var newLayerSource = sel[0].type === "INSTANCE" ? sel[0] : newMain;
+      var newLayers = buildComponentLayers(newLayerSource);
       figma.ui.postMessage({
         type: "new-component-result",
         component: {
           id: newMain.id,
           name: newMain.name,
+          componentKey: newMain.key,
           layers: newLayers
         }
       });
     }
+    if (msg.type === "focus-node" && msg.nodeId) {
+      var focusNode = await figma.getNodeByIdAsync(msg.nodeId);
+      if (focusNode && focusNode.type !== "DOCUMENT" && focusNode.type !== "PAGE") {
+        var sceneNode = focusNode;
+        var nodePage = getPage(sceneNode);
+        if (nodePage && figma.currentPage !== nodePage) {
+          await figma.setCurrentPageAsync(nodePage);
+        }
+        figma.currentPage.selection = [sceneNode];
+        figma.viewport.scrollAndZoomIntoView([sceneNode]);
+      }
+    }
     if (msg.type === "run-conversion") {
-      var oldComponentId = msg.oldComponentId;
-      var newComponentId = msg.newComponentId;
+      var oldComponentKey = msg.oldComponentKey;
+      var newComponentKey = msg.newComponentKey;
+      var preserveColors = msg.preserveColors !== void 0 ? msg.preserveColors : true;
       var mappings = msg.mappings;
       var scope = msg.scope;
-      var preserveColors = msg.preserveColors !== void 0 ? msg.preserveColors : true;
-      console.log("[CS] === D\xC9BUT CONVERSION ===");
-      console.log("[CS] preserveColors:", preserveColors);
+      console.log("[SG] === D\xC9BUT CONVERSION ===");
+      console.log("[SG] oldKey:", oldComponentKey, "newKey:", newComponentKey);
+      console.log("[SG] scope:", scope, "preserveColors:", preserveColors);
+      console.log("[SG] mappings:", mappings.length);
       try {
-        var oldComp = await figma.getNodeByIdAsync(
-          oldComponentId
-        );
-        var newComp = await figma.getNodeByIdAsync(
-          newComponentId
-        );
-        if (!oldComp || !newComp) {
+        var newComp = null;
+        try {
+          newComp = await figma.importComponentByKeyAsync(newComponentKey);
+          console.log("[SG] New component imported by key:", newComp.name);
+        } catch (importErr) {
+          console.log("[SG] importByKey failed, searching locally...");
+          for (var pi = 0; pi < figma.root.children.length; pi++) {
+            var searchPage = figma.root.children[pi];
+            var comps = searchPage.findAllWithCriteria({ types: ["COMPONENT"] });
+            for (var ci = 0; ci < comps.length; ci++) {
+              if (comps[ci].key === newComponentKey) {
+                newComp = comps[ci];
+                break;
+              }
+            }
+            if (newComp) break;
+          }
+        }
+        if (!newComp) {
           figma.ui.postMessage({
             type: "conversion-error",
-            error: "Impossible de retrouver un des composants. Il a peut-\xEAtre \xE9t\xE9 supprim\xE9."
+            error: "Impossible de retrouver le nouveau composant. V\xE9rifiez qu'il est pr\xE9sent dans le fichier ou publi\xE9 en librairie."
           });
           return;
-        }
-        var mappingPaths = {};
-        for (var mp = 0; mp < mappings.length; mp++) {
-          var pathResult = getPathToNamedNode(oldComp, mappings[mp].sourceLayerName);
-          mappingPaths[mappings[mp].id] = pathResult;
-          console.log("[CS] Chemin pour '" + mappings[mp].sourceLayerName + "':", pathResult ? pathResult.join(" \u2192 ") : "NON TROUV\xC9 dans le composant");
         }
         var pagesToSearch = scope === "page" ? [figma.currentPage] : figma.root.children;
         var instances = [];
@@ -376,13 +456,13 @@
           var found = page.findAllWithCriteria({ types: ["INSTANCE"] });
           for (var f = 0; f < found.length; f++) {
             var inst = found[f];
-            if (inst.mainComponent && inst.mainComponent.id === oldComponentId) {
-              instances.push(inst);
+            if (inst.mainComponent && inst.mainComponent.key === oldComponentKey) {
+              instances.push({ node: inst, pageName: page.name });
             }
           }
         }
         var totalInstances = instances.length;
-        console.log("[CS] Instances trouv\xE9es:", totalInstances);
+        console.log("[SG] Instances trouv\xE9es:", totalInstances);
         if (totalInstances === 0) {
           figma.ui.postMessage({
             type: "conversion-complete",
@@ -400,37 +480,40 @@
         var failedInstances = [];
         var pageStats = {};
         for (var i = 0; i < instances.length; i++) {
-          var instance = instances[i];
-          var instancePage = getPage(instance);
-          var pageName = instancePage ? instancePage.name : "Inconnue";
+          var instance = instances[i].node;
+          var pageName = instances[i].pageName;
           var label = "#" + i;
           try {
+            console.log(
+              "[SG] \u2500\u2500 Instance " + label + " '" + instance.name + "' \u2500\u2500"
+            );
             var savedContent = {};
-            console.log("[CS] \u2500\u2500 Instance " + label + " '" + instance.name + "' \u2500\u2500");
             for (var m = 0; m < mappings.length; m++) {
               var mapping = mappings[m];
-              var sourceNode = findLayerByName(instance, mapping.sourceLayerName);
+              var sourceNode = findSourceNode(
+                instance,
+                mapping.sourceIndexPath,
+                mapping.sourcePath,
+                label
+              );
               if (!sourceNode) {
-                var savedPath = mappingPaths[mapping.id];
-                if (savedPath) {
-                  sourceNode = getNodeByPath(instance, savedPath);
-                  if (sourceNode) {
-                    console.log("[CS]   [" + label + "] '" + mapping.sourceLayerName + "' pas trouv\xE9 par nom, TROUV\xC9 par chemin \u2192 " + sourceNode.type + " '" + sourceNode.name + "'");
-                  }
-                }
-              }
-              if (!sourceNode) {
-                console.log("[CS]   [" + label + "] '" + mapping.sourceLayerName + "': NULL \u274C (ni par nom, ni par chemin)");
+                console.log(
+                  "[SG]   [" + label + "] source [" + mapping.sourcePath.join(" \u2192 ") + "] indexPath [" + (mapping.sourceIndexPath || []).join(",") + "]: NON TROUV\xC9"
+                );
                 continue;
               }
-              if (sourceNode.type === "TEXT" && mapping.sourceLayerType === "text") {
+              if (sourceNode.type === "TEXT" && mapping.layerType === "text") {
                 savedContent[mapping.id] = {
                   type: "text",
                   value: sourceNode.characters
                 };
-              } else if (sourceNode.type === "INSTANCE" && mapping.sourceLayerType === "instance") {
+                console.log(
+                  "[SG]   [" + label + "] TEXT '" + sourceNode.name + `' = "` + sourceNode.characters.substring(0, 30) + '"'
+                );
+              } else if (sourceNode.type === "INSTANCE" && mapping.layerType === "instance") {
                 var nestedInst = sourceNode;
-                var compId = nestedInst.mainComponent ? nestedInst.mainComponent.id : null;
+                var nestedKey = nestedInst.mainComponent ? nestedInst.mainComponent.key : null;
+                var nestedId = nestedInst.mainComponent ? nestedInst.mainComponent.id : null;
                 var instDirectFills = null;
                 if ("fills" in nestedInst) {
                   var rawInstFills = nestedInst.fills;
@@ -442,20 +525,17 @@
                   }
                 }
                 var cFills = collectChildFills(nestedInst);
-                var cHash = "aucun";
-                for (var cf = 0; cf < cFills.length; cf++) {
-                  if (cFills[cf].hasImage) {
-                    cHash = getImageHash(cFills[cf].fills);
-                  }
-                }
-                console.log("[CS]   [" + label + "] Instance '" + sourceNode.name + "' comp:" + compId + " | childFills:" + cFills.length + " | imageHash: " + cHash);
+                console.log(
+                  "[SG]   [" + label + "] INSTANCE '" + sourceNode.name + "' key:" + nestedKey + " id:" + nestedId + " | childFills:" + cFills.length
+                );
                 savedContent[mapping.id] = {
                   type: "instance",
-                  value: compId,
+                  value: nestedKey,
+                  compId: nestedId,
                   directFills: instDirectFills,
                   childFills: cFills
                 };
-              } else if (mapping.sourceLayerType === "image") {
+              } else if (mapping.layerType === "image") {
                 var directFills = null;
                 if ("fills" in sourceNode) {
                   var rawFills = sourceNode.fills;
@@ -463,16 +543,19 @@
                     directFills = JSON.parse(JSON.stringify(rawFills));
                   }
                 }
-                var dHash = directFills ? getImageHash(directFills) : "null";
-                console.log("[CS]   [" + label + "] Image directe '" + sourceNode.name + "' | imageHash: " + dHash);
                 var cFills2 = collectChildFills(sourceNode);
+                console.log(
+                  "[SG]   [" + label + "] IMAGE '" + sourceNode.name + "' | hash: " + (directFills ? getImageHash(directFills) : "null")
+                );
                 savedContent[mapping.id] = {
                   type: "fills",
                   value: directFills,
                   childFills: cFills2
                 };
-              } else if (mapping.sourceLayerType === "instance" && sourceNode.type !== "INSTANCE") {
-                console.log("[CS]   [" + label + "] Type mismatch: attendu INSTANCE, trouv\xE9 " + sourceNode.type + " \u2014 on collecte les fills quand m\xEAme");
+              } else if (mapping.layerType === "instance" && sourceNode.type !== "INSTANCE") {
+                console.log(
+                  "[SG]   [" + label + "] Type mismatch: attendu INSTANCE, trouv\xE9 " + sourceNode.type + " \u2014 on collecte les fills"
+                );
                 var fallbackFills = null;
                 if ("fills" in sourceNode) {
                   var fbRaw = sourceNode.fills;
@@ -488,36 +571,59 @@
               }
             }
             instance.swapComponent(newComp);
-            console.log("[CS]   [" + label + "] SWAP \u2192 " + newComp.name);
+            console.log("[SG]   [" + label + "] SWAP \u2192 " + newComp.name);
             for (var m2 = 0; m2 < mappings.length; m2++) {
               var map = mappings[m2];
               var content = savedContent[map.id];
               if (!content) continue;
-              var targetNode = findLayerByName(instance, map.targetLayerName);
+              var targetNode = findTargetNode(
+                instance,
+                map.targetPath,
+                map.targetIndexPath,
+                label
+              );
               if (!targetNode) {
-                var targetPath = getPathToNamedNode(newComp, map.targetLayerName);
-                if (targetPath) {
-                  targetNode = getNodeByPath(instance, targetPath);
-                }
-              }
-              if (!targetNode) {
-                console.log("[CS]   [" + label + "] Target '" + map.targetLayerName + "': NULL \u274C");
+                console.log(
+                  "[SG]   [" + label + "] Target [" + map.targetPath.join(" \u2192 ") + "]: NON TROUV\xC9"
+                );
                 continue;
               }
               if (content.type === "text" && targetNode.type === "TEXT") {
                 await loadFontsForText(targetNode);
                 targetNode.characters = content.value;
+                console.log(
+                  "[SG]   [" + label + "] \u2705 TEXT \u2192 '" + targetNode.name + "'"
+                );
               } else if (content.type === "instance") {
-                if (content.value && targetNode.type === "INSTANCE") {
+                if ((content.value || content.compId) && targetNode.type === "INSTANCE") {
                   var targetInst = targetNode;
-                  var currentCompId = targetInst.mainComponent ? targetInst.mainComponent.id : null;
-                  if (currentCompId !== content.value) {
-                    var comp = await figma.getNodeByIdAsync(
-                      content.value
-                    );
-                    if (comp && comp.type === "COMPONENT") {
-                      targetInst.swapComponent(comp);
-                      console.log("[CS]   [" + label + "] \u2705 Sous-composant swapp\xE9 vers " + comp.name);
+                  var currentKey = targetInst.mainComponent ? targetInst.mainComponent.key : null;
+                  if (currentKey !== content.value) {
+                    var nestedComp = null;
+                    if (content.value) {
+                      try {
+                        nestedComp = await figma.importComponentByKeyAsync(content.value);
+                      } catch (e) {
+                        console.log(
+                          "[SG]   [" + label + "] importByKey \xE9chou\xE9 pour nested, fallback ID"
+                        );
+                      }
+                    }
+                    if (!nestedComp && content.compId) {
+                      var byId = await figma.getNodeByIdAsync(content.compId);
+                      if (byId && byId.type === "COMPONENT") {
+                        nestedComp = byId;
+                      }
+                    }
+                    if (nestedComp) {
+                      targetInst.swapComponent(nestedComp);
+                      console.log(
+                        "[SG]   [" + label + "] \u2705 Sous-composant swapp\xE9 \u2192 " + nestedComp.name
+                      );
+                    } else {
+                      console.log(
+                        "[SG]   [" + label + "] \u26A0\uFE0F Nested component introuvable (key:" + content.value + " id:" + content.compId + ")"
+                      );
                     }
                   }
                 }
@@ -528,13 +634,20 @@
                   }
                 }
                 if (content.childFills && content.childFills.length > 0) {
-                  applyChildFills(targetNode, content.childFills, preserveColors, label);
+                  applyChildFills(
+                    targetNode,
+                    content.childFills,
+                    preserveColors,
+                    label
+                  );
                 }
               } else if (content.type === "fills") {
                 if (content.value && "fills" in targetNode) {
                   try {
                     targetNode.fills = content.value;
-                    console.log("[CS]   [" + label + "] \u2705 Fills directs appliqu\xE9s sur '" + targetNode.name + "'");
+                    console.log(
+                      "[SG]   [" + label + "] \u2705 Fills \u2192 '" + targetNode.name + "'"
+                    );
                   } catch (e) {
                   }
                 }
@@ -554,7 +667,9 @@
                     if (imgTarget && "fills" in imgTarget) {
                       try {
                         imgTarget.fills = content.value;
-                        console.log("[CS]   [" + label + "] \u2705 Fallback fill image dans '" + imgTarget.name + "'");
+                        console.log(
+                          "[SG]   [" + label + "] \u2705 Fallback image \u2192 '" + imgTarget.name + "'"
+                        );
                       } catch (e) {
                       }
                     }
@@ -565,7 +680,7 @@
             converted++;
             pageStats[pageName] = (pageStats[pageName] || 0) + 1;
           } catch (err) {
-            console.log("[CS] \u274C ERREUR sur " + label + ":", err);
+            console.log("[SG] \u274C ERREUR sur " + label + ":", err);
             failedInstances.push({
               id: instance.id,
               name: instance.name,
@@ -575,10 +690,14 @@
           }
           figma.ui.postMessage({
             type: "conversion-progress",
-            progress: Math.round((i + 1) / totalInstances * 100)
+            progress: Math.round((i + 1) / totalInstances * 100),
+            current: i + 1,
+            total: totalInstances
           });
         }
-        console.log("[CS] === FIN: " + converted + "/" + totalInstances + " converties ===");
+        console.log(
+          "[SG] === FIN: " + converted + "/" + totalInstances + " converties ==="
+        );
         var pages = [];
         for (var pName in pageStats) {
           if (pageStats.hasOwnProperty(pName)) {
@@ -596,23 +715,11 @@
           }
         });
       } catch (err) {
-        console.log("[CS] \u274C ERREUR GLOBALE:", err);
+        console.log("[SG] \u274C ERREUR GLOBALE:", err);
         figma.ui.postMessage({
           type: "conversion-error",
           error: err && err.message ? err.message : "Erreur inattendue lors de la conversion."
         });
-      }
-    }
-    if (msg.type === "focus-node" && msg.nodeId) {
-      var focusNode = await figma.getNodeByIdAsync(msg.nodeId);
-      if (focusNode && focusNode.type !== "DOCUMENT" && focusNode.type !== "PAGE") {
-        var sceneNode = focusNode;
-        var nodePage = getPage(sceneNode);
-        if (nodePage && figma.currentPage !== nodePage) {
-          await figma.setCurrentPageAsync(nodePage);
-        }
-        figma.currentPage.selection = [sceneNode];
-        figma.viewport.scrollAndZoomIntoView([sceneNode]);
       }
     }
   };
