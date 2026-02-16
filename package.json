@@ -1,0 +1,31 @@
+{
+  "name": "swap-guardian",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+ "scripts": {
+    "build:ui": "vite build",
+    "build:sandbox": "esbuild src/code.ts --bundle --outfile=dist/code.js --target=es2017",
+    "build": "npm run build:ui && npm run build:sandbox",
+    "dev:ui": "vite build --watch",
+    "dev:sandbox": "esbuild src/code.ts --bundle --outfile=dist/code.js --target=es2017 --watch"
+},
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.123.0",
+    "@tailwindcss/vite": "^4.1.18",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.4",
+    "esbuild": "^0.27.3",
+    "lucide-react": "^0.564.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "tailwindcss": "^4.1.18",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1",
+    "vite-plugin-singlefile": "^2.3.0"
+  }
+}
