@@ -1,8 +1,13 @@
 {
   "name": "Swap Guardian",
-  "id": "swap-guardian-plugin",
+  "id": "1605720494718431476",
   "api": "1.0.0",
   "main": "dist/code.js",
   "ui": "dist/index.html",
+  "documentAccess": "dynamic-page",
+  "networkAccess": {
+    "allowedDomains": ["none"]
+  },
   "editorType": ["figma"]
+  
 }
