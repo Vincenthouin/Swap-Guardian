@@ -87,12 +87,21 @@ interface I18nContextValue {
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
+function detectLang(): Lang {
+  try {
+    const browserLang = navigator.language || navigator.languages?.[0] || "en";
+    return browserLang.startsWith("fr") ? "fr" : "en";
+  } catch {
+    return "en";
+  }
+}
+
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [lang, setLang] = useState<Lang>("fr");
+  const [lang, setLang] = useState<Lang>(detectLang);
 
   const t = useCallback(
     (key: TranslationKey, vars?: Record<string, string | number>) => {
-      let str = translations[key]?.[lang] ?? key;
+      let str: string = translations[key]?.[lang] ?? key;
       if (vars) {
         for (const [k, v] of Object.entries(vars)) {
           str = str.replace(new RegExp(`\\{${k}\\}`, "g"), String(v));
