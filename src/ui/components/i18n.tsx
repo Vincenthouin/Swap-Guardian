@@ -35,7 +35,7 @@ const translations = {
   layerAlreadyAdded:  { fr: "Ce layer est déjà dans la liste.", en: "This layer is already in the list." },
 
   // ─── Step 2 ───
-  step2Instruction:   { fr: "Sélectionnez le nouveau composant, puis associez chaque calque de l'ancien au calque correspondant du nouveau. Les layers imbriqués dans les sous-composants sont aussi disponibles.", en: "Select the new component, then map each layer from the old one to the corresponding layer in the new one. Nested layers inside sub-components are also available." },
+  step2Instruction:   { fr: "Sélectionnez maintenant le nouveau composant que vous souhaitez insérer, puis associez chaque calque de l'ancien composant à celui correspondant dans le nouveau", en: "Select the new component, then map each layer from the old one to the corresponding layer in the new one." },
   targetComponent:    { fr: "Composant cible",          en: "Target component" },
   clickToSelectNew:   { fr: "Sélectionnez le nouveau composant dans Figma, puis cliquez ici", en: "Select the new component in Figma, then click here" },
   layersAvailable:    { fr: "{count} layers disponibles",en: "{count} layers available" },
