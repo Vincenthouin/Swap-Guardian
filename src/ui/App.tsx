@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { Repeat, Figma, Globe } from "lucide-react";
+import { Repeat, Globe } from "lucide-react";
 import { I18nProvider, useI18n } from "./components/i18n";
 import { StepIndicator } from "./components/step-indicator";
 import { Step1SelectLayers } from "./components/step1-select-layers";
@@ -195,11 +195,7 @@ function AppContent() {
           title={lang === "fr" ? "Switch to English" : "Passer en français"}
         >
           <Globe className="w-3.5 h-3.5" />
-        </Button>
-        <div className="flex items-center gap-1.5 text-neutral-300">
-          <Figma className="w-3.5 h-3.5" />
-          <span className="text-[10px]">{t("plugin")}</span>
-        </div>
+         </Button>
       </div>
 
       {/* Step Indicator */}
