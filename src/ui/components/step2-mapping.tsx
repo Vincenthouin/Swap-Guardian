@@ -11,6 +11,7 @@ import { flattenLayers } from "./utils";
 import type { LayerItem, MappingEntry, ComponentInfo } from "./types";
 
 interface Step2Props {
+  stepTitle: string;
   selectedLayers: LayerItem[];
   mappings: MappingEntry[];
   onMappingsChange: (mappings: MappingEntry[]) => void;
@@ -24,6 +25,7 @@ interface Step2Props {
 }
 
 export function Step2Mapping({
+  stepTitle,
   selectedLayers, mappings, onMappingsChange,
   newComponent, isSelectingNew, newComponentError,
   onRequestNewComponent, onClearNewComponent, onNext, onBack,
@@ -63,201 +65,208 @@ export function Step2Mapping({
   const allMapped = mappedCount === mappings.length && mappings.length > 0;
 
   return (
-    <div className="flex flex-col gap-5">
-      {/* Instructions — style bleu (comme étape 1) */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3.5">
-        <div className="flex gap-2.5">
-          <Link2 className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-          <p className="text-xs text-blue-800">{t("step2Instruction")}</p>
-        </div>
-      </div>
+    <div className="flex flex-col flex-1 min-h-0">
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-y-auto px-4">
+        <h2 className="text-sm text-neutral-900 pt-4 pb-3">{stepTitle}</h2>
 
-      {/* New Component Selection */}
-      <div>
-        <label className="text-xs text-neutral-500 mb-2 block">{t("targetComponent")}</label>
-        {!newComponent ? (
-          <button
-            onClick={onRequestNewComponent}
-            disabled={isSelectingNew}
-            className="w-full border-2 border-dashed border-neutral-200 rounded-lg p-5 flex flex-col items-center gap-2.5 hover:border-neutral-300 hover:bg-neutral-50 transition-all cursor-pointer disabled:opacity-50"
-          >
-            <div className="w-8 h-8 rounded-full bg-neutral-100 flex items-center justify-center">
-              {isSelectingNew ? (
-                <RefreshCw className="w-4 h-4 text-neutral-400 animate-spin" />
-              ) : (
-                <Component className="w-4 h-4 text-neutral-400" />
-              )}
-            </div>
-            <span className="text-xs text-neutral-400">
-              {isSelectingNew ? t("selectingComponent") : t("clickToSelectNew")}
-            </span>
-          </button>
-        ) : (
-          <div className="border border-neutral-200 rounded-lg p-3.5 bg-white">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-md bg-emerald-100 flex items-center justify-center">
-                  <Component className="w-4 h-4 text-emerald-600" />
-                </div>
-                <div>
-                  <p className="text-sm text-neutral-900">{newComponent.name}</p>
-                  <p className="text-xs text-neutral-500">
-                    {t("layersAvailable", { count: flatNewLayers.length })}
-                  </p>
-                </div>
-              </div>
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClearNewComponent}>
-                <X className="w-3.5 h-3.5" />
-              </Button>
+        <div className="flex flex-col gap-5 pb-4">
+          {/* Instructions — style bleu (comme étape 1) */}
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3.5">
+            <div className="flex gap-2.5">
+              <Link2 className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
+              <p className="text-xs text-blue-800">{t("step2Instruction")}</p>
             </div>
           </div>
-        )}
-      </div>
 
-      {/* Error */}
-      {newComponentError && (
-        <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 border border-red-200">
-          <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
-          <p className="text-xs text-red-700">{newComponentError}</p>
-        </div>
-      )}
-
-      {/* Mapping List */}
-      {newComponent && (
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <label className="text-xs text-neutral-500">
-              {t("associations")} ({mappedCount}/{mappings.length})
-            </label>
-            {allMapped && (
-              <Badge variant="secondary" className="text-[10px] bg-emerald-100 text-emerald-700 border-emerald-200">
-                <Check className="w-3 h-3" /> {t("complete")}
-              </Badge>
+          {/* New Component Selection */}
+          <div>
+            <label className="text-xs text-neutral-500 mb-2 block">{t("targetComponent")}</label>
+            {!newComponent ? (
+              <button
+                onClick={onRequestNewComponent}
+                disabled={isSelectingNew}
+                className="w-full border-2 border-dashed border-neutral-200 rounded-lg p-5 flex flex-col items-center gap-2.5 hover:border-neutral-300 hover:bg-neutral-50 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <div className="w-8 h-8 rounded-full bg-neutral-100 flex items-center justify-center">
+                  {isSelectingNew ? (
+                    <RefreshCw className="w-4 h-4 text-neutral-400 animate-spin" />
+                  ) : (
+                    <Component className="w-4 h-4 text-neutral-400" />
+                  )}
+                </div>
+                <span className="text-xs text-neutral-400">
+                  {isSelectingNew ? t("selectingComponent") : t("clickToSelectNew")}
+                </span>
+              </button>
+            ) : (
+              <div className="border border-neutral-200 rounded-lg p-3.5 bg-white">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-md bg-emerald-100 flex items-center justify-center">
+                      <Component className="w-4 h-4 text-emerald-600" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-neutral-900">{newComponent.name}</p>
+                      <p className="text-xs text-neutral-500">
+                        {t("layersAvailable", { count: flatNewLayers.length })}
+                      </p>
+                    </div>
+                  </div>
+                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClearNewComponent}>
+                    <X className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
             )}
           </div>
 
-          <div className="flex flex-col gap-2">
-            {mappings.map((mapping) => {
-              const isActive = activeMappingId === mapping.id;
-              const isMapped = mapping.targetLayer !== null;
+          {/* Error */}
+          {newComponentError && (
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 border border-red-200">
+              <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+              <p className="text-xs text-red-700">{newComponentError}</p>
+            </div>
+          )}
 
-              return (
-                <div key={mapping.id}>
-                  <div className={`rounded-lg border transition-all ${isActive ? "border-blue-300 bg-blue-50/50" : "border-neutral-200 bg-white"}`}>
-                    <div className="p-2.5">
-                      <div className="flex items-center gap-2">
-                        {/* Source */}
-                        <div className="flex items-center gap-2 flex-1 min-w-0 bg-neutral-100 rounded-md px-2.5 py-2">
-                          <LayerIcon type={mapping.sourceLayer.type} />
-                          <div className="min-w-0 flex-1">
-                            <p className="text-xs text-neutral-900 truncate">{mapping.sourceLayer.name}</p>
-                            {mapping.sourceLayer.parentComponentName && (
-                              <p className="text-[10px] text-violet-600 truncate">
-                                {t("inComponent")} {mapping.sourceLayer.parentComponentName}
+          {/* Mapping List */}
+          {newComponent && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs text-neutral-500">
+                  {t("associations")} ({mappedCount}/{mappings.length})
+                </label>
+                {allMapped && (
+                  <Badge variant="secondary" className="text-[10px] bg-emerald-100 text-emerald-700 border-emerald-200">
+                    <Check className="w-3 h-3" /> {t("complete")}
+                  </Badge>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-2">
+                {mappings.map((mapping) => {
+                  const isActive = activeMappingId === mapping.id;
+                  const isMapped = mapping.targetLayer !== null;
+
+                  return (
+                    <div key={mapping.id}>
+                      <div className={`rounded-lg border transition-all ${isActive ? "border-blue-300 bg-blue-50/50" : "border-neutral-200 bg-white"}`}>
+                        <div className="p-2.5">
+                          <div className="flex items-center gap-2">
+                            {/* Source */}
+                            <div className="flex items-center gap-2 flex-1 min-w-0 bg-neutral-100 rounded-md px-2.5 py-2">
+                              <LayerIcon type={mapping.sourceLayer.type} />
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs text-neutral-900 truncate">{mapping.sourceLayer.name}</p>
+                                {mapping.sourceLayer.parentComponentName && (
+                                  <p className="text-[10px] text-violet-600 truncate">
+                                    {t("inComponent")} {mapping.sourceLayer.parentComponentName}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+
+                            <ArrowRight className={`w-4 h-4 shrink-0 ${isMapped ? "text-emerald-500" : "text-neutral-300"}`} />
+
+                            {/* Target */}
+                            {isMapped ? (
+                              <div className="flex items-center gap-2 flex-1 min-w-0 bg-emerald-50 border border-emerald-200 rounded-md px-2.5 py-2">
+                                <LayerIcon type={mapping.targetLayer!.type} />
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-xs text-neutral-900 truncate">{mapping.targetLayer!.name}</p>
+                                  {mapping.targetLayer!.parentComponentName && (
+                                    <p className="text-[10px] text-violet-600 truncate">
+                                      {t("inComponent")} {mapping.targetLayer!.parentComponentName}
+                                    </p>
+                                  )}
+                                </div>
+                                <button onClick={() => handleClearMapping(mapping.id)} className="shrink-0 hover:text-red-500 transition-colors cursor-pointer">
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setActiveMappingId(mapping.id)}
+                                className={`flex items-center gap-2 flex-1 min-w-0 rounded-md px-2.5 py-2 transition-all cursor-pointer ${
+                                  isActive ? "bg-blue-100 border border-blue-300" : "border border-dashed border-neutral-200 hover:border-neutral-300"
+                                }`}
+                              >
+                                <MousePointerClick className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-blue-500" : "text-neutral-400"}`} />
+                                <span className={`text-xs ${isActive ? "text-blue-600" : "text-neutral-400"}`}>
+                                  {isActive ? t("choosing") : t("associate")}
+                                </span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Target picker — no max-h / overflow-y-auto */}
+                      {isActive && (
+                        <div className="mt-1.5 border border-blue-200 rounded-lg bg-blue-50/50 overflow-hidden">
+                          <div className="px-3 py-2 bg-blue-100/60 border-b border-blue-200 flex items-center justify-between">
+                            <span className="text-xs text-blue-800">
+                              {t("mapLayerTo", { name: mapping.sourceLayer.name })}
+                            </span>
+                            <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => setActiveMappingId(null)}>
+                              <X className="w-3 h-3" />
+                            </Button>
+                          </div>
+                          <div className="p-2 flex flex-col gap-0.5">
+                            {flatNewLayers
+                              .filter((nl) => nl.type === mapping.sourceLayer.type)
+                              .map((layer) => {
+                                const alreadyUsed = mappings.some(
+                                  (m) => m.targetLayer?.id === layer.id && m.id !== mapping.id
+                                );
+                                const isNested = !!layer.parentInstanceName;
+                                return (
+                                  <button
+                                    key={layer.id}
+                                    onClick={() => handlePickTarget(layer)}
+                                    disabled={alreadyUsed}
+                                    className={`flex items-center gap-2.5 p-2 rounded-md text-left transition-colors ${
+                                      isNested ? "pl-7" : ""
+                                    } ${
+                                      alreadyUsed ? "opacity-40 cursor-not-allowed" : "hover:bg-blue-100 cursor-pointer"
+                                    }`}
+                                  >
+                                    <LayerIcon type={layer.type} />
+                                    <span className="text-sm text-neutral-900 flex-1 truncate">{layer.name}</span>
+                                    {layer.parentComponentName && (
+                                      <Badge
+                                        variant="secondary"
+                                        className="text-[10px] px-1.5 py-0 shrink-0 bg-violet-50 text-violet-600 border-violet-200"
+                                      >
+                                        {t("inComponent")} {layer.parentComponentName}
+                                      </Badge>
+                                    )}
+                                    {layer.componentName && !layer.parentComponentName && (
+                                      <span className="text-[10px] text-neutral-400">{layer.componentName}</span>
+                                    )}
+                                    {alreadyUsed && <span className="text-[10px] text-blue-500">{t("alreadyMapped")}</span>}
+                                  </button>
+                                );
+                              })}
+                            {flatNewLayers.filter((nl) => nl.type === mapping.sourceLayer.type).length === 0 && (
+                              <p className="text-xs text-neutral-400 p-2 text-center">
+                                {t("noCompatibleLayer")} ({mapping.sourceLayer.type})
                               </p>
                             )}
                           </div>
                         </div>
-
-                        <ArrowRight className={`w-4 h-4 shrink-0 ${isMapped ? "text-emerald-500" : "text-neutral-300"}`} />
-
-                        {/* Target */}
-                        {isMapped ? (
-                          <div className="flex items-center gap-2 flex-1 min-w-0 bg-emerald-50 border border-emerald-200 rounded-md px-2.5 py-2">
-                            <LayerIcon type={mapping.targetLayer!.type} />
-                            <div className="min-w-0 flex-1">
-                              <p className="text-xs text-neutral-900 truncate">{mapping.targetLayer!.name}</p>
-                              {mapping.targetLayer!.parentComponentName && (
-                                <p className="text-[10px] text-violet-600 truncate">
-                                  {t("inComponent")} {mapping.targetLayer!.parentComponentName}
-                                </p>
-                              )}
-                            </div>
-                            <button onClick={() => handleClearMapping(mapping.id)} className="shrink-0 hover:text-red-500 transition-colors cursor-pointer">
-                              <X className="w-3 h-3" />
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => setActiveMappingId(mapping.id)}
-                            className={`flex items-center gap-2 flex-1 min-w-0 rounded-md px-2.5 py-2 transition-all cursor-pointer ${
-                              isActive ? "bg-blue-100 border border-blue-300" : "border border-dashed border-neutral-200 hover:border-neutral-300"
-                            }`}
-                          >
-                            <MousePointerClick className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-blue-500" : "text-neutral-400"}`} />
-                            <span className={`text-xs ${isActive ? "text-blue-600" : "text-neutral-400"}`}>
-                              {isActive ? t("choosing") : t("associate")}
-                            </span>
-                          </button>
-                        )}
-                      </div>
+                      )}
                     </div>
-                  </div>
-
-                  {/* Target picker — no max-h / overflow-y-auto */}
-                  {isActive && (
-                    <div className="mt-1.5 border border-blue-200 rounded-lg bg-blue-50/50 overflow-hidden">
-                      <div className="px-3 py-2 bg-blue-100/60 border-b border-blue-200 flex items-center justify-between">
-                        <span className="text-xs text-blue-800">
-                          {t("mapLayerTo", { name: mapping.sourceLayer.name })}
-                        </span>
-                        <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => setActiveMappingId(null)}>
-                          <X className="w-3 h-3" />
-                        </Button>
-                      </div>
-                      <div className="p-2 flex flex-col gap-0.5">
-                        {flatNewLayers
-                          .filter((nl) => nl.type === mapping.sourceLayer.type)
-                          .map((layer) => {
-                            const alreadyUsed = mappings.some(
-                              (m) => m.targetLayer?.id === layer.id && m.id !== mapping.id
-                            );
-                            const isNested = !!layer.parentInstanceName;
-                            return (
-                              <button
-                                key={layer.id}
-                                onClick={() => handlePickTarget(layer)}
-                                disabled={alreadyUsed}
-                                className={`flex items-center gap-2.5 p-2 rounded-md text-left transition-colors ${
-                                  isNested ? "pl-7" : ""
-                                } ${
-                                  alreadyUsed ? "opacity-40 cursor-not-allowed" : "hover:bg-blue-100 cursor-pointer"
-                                }`}
-                              >
-                                <LayerIcon type={layer.type} />
-                                <span className="text-sm text-neutral-900 flex-1 truncate">{layer.name}</span>
-                                {layer.parentComponentName && (
-                                  <Badge
-                                    variant="secondary"
-                                    className="text-[10px] px-1.5 py-0 shrink-0 bg-violet-50 text-violet-600 border-violet-200"
-                                  >
-                                    {t("inComponent")} {layer.parentComponentName}
-                                  </Badge>
-                                )}
-                                {layer.componentName && !layer.parentComponentName && (
-                                  <span className="text-[10px] text-neutral-400">{layer.componentName}</span>
-                                )}
-                                {alreadyUsed && <span className="text-[10px] text-blue-500">{t("alreadyMapped")}</span>}
-                              </button>
-                            );
-                          })}
-                        {flatNewLayers.filter((nl) => nl.type === mapping.sourceLayer.type).length === 0 && (
-                          <p className="text-xs text-neutral-400 p-2 text-center">
-                            {t("noCompatibleLayer")} ({mapping.sourceLayer.type})
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
-      {/* Sticky footer */}
-      <div className="sticky bottom-0 -mx-4 px-4 pt-3 pb-4 -mb-4 bg-white border-t border-neutral-200 flex gap-2">
+      {/* Fixed footer */}
+      <div className="shrink-0 px-4 py-3 border-t border-neutral-200 bg-white flex gap-2">
         <Button variant="outline" className="flex-1" onClick={onBack}>
           <ChevronLeft className="w-4 h-4" /> {t("back")}
         </Button>

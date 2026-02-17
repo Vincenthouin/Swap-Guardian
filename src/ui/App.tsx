@@ -176,7 +176,7 @@ function AppContent() {
 
   return (
     <div className="flex flex-col h-screen bg-white">
-      {/* Header — sticky */}
+      {/* Header — shrink-0 */}
       <div className="px-4 py-3 bg-white border-b border-neutral-200 flex items-center gap-3 shrink-0">
         <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-blue-600 flex items-center justify-center shrink-0">
           <Repeat className="w-3.5 h-3.5 text-white" />
@@ -196,7 +196,7 @@ function AppContent() {
         </Button>
       </div>
 
-      {/* Step Indicator — sticky */}
+      {/* Step Indicator — shrink-0 */}
       <div className="px-4 py-3 bg-white border-b border-neutral-200 shrink-0">
         <StepIndicator
           currentStep={currentStep}
@@ -205,59 +205,53 @@ function AppContent() {
         />
       </div>
 
-      {/* Scrollable area — contains step title + step content */}
-      <div className="flex-1 overflow-y-auto">
-        {/* Step Title — scrolls with content */}
-        <div className="px-4 pt-4 pb-1">
-          <h2 className="text-sm text-neutral-900">{steps[currentStep - 1].label}</h2>
-          <p className="text-xs text-neutral-500 mt-0.5">{steps[currentStep - 1].description}</p>
-        </div>
-
-        {/* Step Content */}
-        <div className="px-4 py-4">
-          {currentStep === 1 && (
-            <Step1SelectLayers
-              selectedComponent={selectedComponent}
-              selectedLayers={selectedLayers}
-              onLayersChange={setSelectedLayers}
-              isSelecting={isSelecting}
-              selectionError={selectionError}
-              onRequestSelection={handleRequestSelection}
-              onClearComponent={handleClearComponent}
-              onNext={handleGoToStep2}
-            />
-          )}
-          {currentStep === 2 && (
-            <Step2Mapping
-              selectedLayers={selectedLayers}
-              mappings={mappings}
-              onMappingsChange={setMappings}
-              newComponent={newComponent}
-              isSelectingNew={isSelectingNew}
-              newComponentError={newComponentError}
-              onRequestNewComponent={handleRequestNewComponent}
-              onClearNewComponent={handleClearNewComponent}
-              onNext={handleGoToStep3}
-              onBack={() => setCurrentStep(1)}
-            />
-          )}
-          {currentStep === 3 && selectedComponent && newComponent && (
-            <Step3Conversion
-              oldComponent={selectedComponent}
-              newComponent={newComponent}
-              mappings={mappings}
-              conversionState={conversionState}
-              progress={progress}
-              progressInfo={progressInfo}
-              result={conversionResult}
-              conversionError={conversionError}
-              onRunConversion={handleRunConversion}
-              onFocusNode={handleFocusNode}
-              onBack={() => setCurrentStep(2)}
-              onReset={handleReset}
-            />
-          )}
-        </div>
+      {/* Step Content — each step manages its own scroll + footer */}
+      <div className="flex-1 min-h-0 flex flex-col">
+        {currentStep === 1 && (
+          <Step1SelectLayers
+            stepTitle={steps[0].label}
+            selectedComponent={selectedComponent}
+            selectedLayers={selectedLayers}
+            onLayersChange={setSelectedLayers}
+            isSelecting={isSelecting}
+            selectionError={selectionError}
+            onRequestSelection={handleRequestSelection}
+            onClearComponent={handleClearComponent}
+            onNext={handleGoToStep2}
+          />
+        )}
+        {currentStep === 2 && (
+          <Step2Mapping
+            stepTitle={steps[1].label}
+            selectedLayers={selectedLayers}
+            mappings={mappings}
+            onMappingsChange={setMappings}
+            newComponent={newComponent}
+            isSelectingNew={isSelectingNew}
+            newComponentError={newComponentError}
+            onRequestNewComponent={handleRequestNewComponent}
+            onClearNewComponent={handleClearNewComponent}
+            onNext={handleGoToStep3}
+            onBack={() => setCurrentStep(1)}
+          />
+        )}
+        {currentStep === 3 && selectedComponent && newComponent && (
+          <Step3Conversion
+            stepTitle={steps[2].label}
+            oldComponent={selectedComponent}
+            newComponent={newComponent}
+            mappings={mappings}
+            conversionState={conversionState}
+            progress={progress}
+            progressInfo={progressInfo}
+            result={conversionResult}
+            conversionError={conversionError}
+            onRunConversion={handleRunConversion}
+            onFocusNode={handleFocusNode}
+            onBack={() => setCurrentStep(2)}
+            onReset={handleReset}
+          />
+        )}
       </div>
     </div>
   );
