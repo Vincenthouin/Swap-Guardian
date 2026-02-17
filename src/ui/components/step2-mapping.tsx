@@ -31,7 +31,6 @@ export function Step2Mapping({
   const { t } = useI18n();
   const [activeMappingId, setActiveMappingId] = useState<string | null>(null);
 
-  // Flatten nested layers for the target picker
   const flatNewLayers = useMemo(
     () => (newComponent ? flattenLayers(newComponent.layers) : []),
     [newComponent]
@@ -65,11 +64,11 @@ export function Step2Mapping({
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Instructions */}
-      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3.5">
+      {/* Instructions — style bleu (comme étape 1) */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3.5">
         <div className="flex gap-2.5">
-          <Link2 className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-          <p className="text-xs text-amber-800">{t("step2Instruction")}</p>
+          <Link2 className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
+          <p className="text-xs text-blue-800">{t("step2Instruction")}</p>
         </div>
       </div>
 
@@ -195,7 +194,7 @@ export function Step2Mapping({
                     </div>
                   </div>
 
-                  {/* Target picker — filtered by type, uses flatNewLayers for nested support */}
+                  {/* Target picker — no max-h / overflow-y-auto */}
                   {isActive && (
                     <div className="mt-1.5 border border-blue-200 rounded-lg bg-blue-50/50 overflow-hidden">
                       <div className="px-3 py-2 bg-blue-100/60 border-b border-blue-200 flex items-center justify-between">
@@ -206,7 +205,7 @@ export function Step2Mapping({
                           <X className="w-3 h-3" />
                         </Button>
                       </div>
-                      <div className="p-2 flex flex-col gap-0.5 max-h-40 overflow-y-auto">
+                      <div className="p-2 flex flex-col gap-0.5">
                         {flatNewLayers
                           .filter((nl) => nl.type === mapping.sourceLayer.type)
                           .map((layer) => {
@@ -257,8 +256,8 @@ export function Step2Mapping({
         </div>
       )}
 
-      {/* Navigation */}
-      <div className="pt-2 border-t border-neutral-200 flex gap-2">
+      {/* Sticky footer */}
+      <div className="sticky bottom-0 -mx-4 px-4 pt-3 pb-4 -mb-4 bg-white border-t border-neutral-200 flex gap-2">
         <Button variant="outline" className="flex-1" onClick={onBack}>
           <ChevronLeft className="w-4 h-4" /> {t("back")}
         </Button>

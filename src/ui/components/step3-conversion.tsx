@@ -50,10 +50,11 @@ export function Step3Conversion({
     <div className="flex flex-col gap-5">
       {conversionState === "idle" && (
         <>
-          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3.5">
+          {/* Instructions — style bleu (comme étape 1) */}
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3.5">
             <div className="flex gap-2.5">
-              <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-              <p className="text-xs text-emerald-800">{t("step3Instruction")}</p>
+              <Sparkles className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
+              <p className="text-xs text-blue-800">{t("step3Instruction")}</p>
             </div>
           </div>
 
@@ -168,7 +169,8 @@ export function Step3Conversion({
             </div>
           )}
 
-          <div className="pt-2 border-t border-neutral-200 flex gap-2">
+          {/* Sticky footer */}
+          <div className="sticky bottom-0 -mx-4 px-4 pt-3 pb-4 -mb-4 bg-white border-t border-neutral-200 flex gap-2">
             <Button variant="outline" className="flex-1" onClick={onBack}>
               <ChevronLeft className="w-4 h-4" /> {t("back")}
             </Button>
@@ -232,27 +234,7 @@ export function Step3Conversion({
             </div>
           </div>
 
-          {/* Pages */}
-          {result.pages.length > 0 && (
-            <div>
-              <label className="text-xs text-neutral-500 mb-2 block">{t("pageDetail")}</label>
-              <div className="border border-neutral-200 rounded-lg divide-y divide-neutral-200 overflow-hidden">
-                {result.pages.map((page) => (
-                  <div key={page.name} className="px-3 py-2.5 flex items-center justify-between bg-white">
-                    <div className="flex items-center gap-2">
-                      <FileText className="w-3.5 h-3.5 text-neutral-400" />
-                      <span className="text-xs text-neutral-900">{page.name}</span>
-                    </div>
-                    <Badge variant="secondary" className="text-[10px]">
-                      {page.count} {page.count > 1 ? t("instancesWord") : t("instanceWord")}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Errors */}
+          {/* ★ Errors BEFORE page detail */}
           {result.errors > 0 && result.failedInstances.length > 0 && (
             <div>
               <button onClick={() => setErrorsExpanded(!errorsExpanded)} className="flex items-center justify-between w-full mb-2 cursor-pointer group">
@@ -305,7 +287,28 @@ export function Step3Conversion({
             </div>
           )}
 
-          <div className="pt-2 border-t border-neutral-200">
+          {/* Pages — now AFTER errors */}
+          {result.pages.length > 0 && (
+            <div>
+              <label className="text-xs text-neutral-500 mb-2 block">{t("pageDetail")}</label>
+              <div className="border border-neutral-200 rounded-lg divide-y divide-neutral-200 overflow-hidden">
+                {result.pages.map((page) => (
+                  <div key={page.name} className="px-3 py-2.5 flex items-center justify-between bg-white">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-3.5 h-3.5 text-neutral-400" />
+                      <span className="text-xs text-neutral-900">{page.name}</span>
+                    </div>
+                    <Badge variant="secondary" className="text-[10px]">
+                      {page.count} {page.count > 1 ? t("instancesWord") : t("instanceWord")}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Sticky footer */}
+          <div className="sticky bottom-0 -mx-4 px-4 pt-3 pb-4 -mb-4 bg-white border-t border-neutral-200">
             <Button variant="outline" className="w-full" onClick={onReset}>
               <RefreshCw className="w-4 h-4" /> {t("newConversion")}
             </Button>

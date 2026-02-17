@@ -3,15 +3,18 @@ import { Check } from "lucide-react";
 interface StepIndicatorProps {
   currentStep: number;
   steps: { label: string; description: string }[];
+  isComplete?: boolean;
 }
 
-export function StepIndicator({ currentStep, steps }: StepIndicatorProps) {
+export function StepIndicator({ currentStep, steps, isComplete }: StepIndicatorProps) {
   return (
     <div className="flex items-center justify-between w-full">
       {steps.map((step, index) => {
         const stepNumber = index + 1;
-        const isActive = stepNumber === currentStep;
-        const isCompleted = stepNumber < currentStep;
+        const isActive = stepNumber === currentStep && !isComplete;
+        const isCompleted =
+          stepNumber < currentStep ||
+          (isComplete && stepNumber <= currentStep);
 
         return (
           <div key={step.label} className="flex items-center flex-1 last:flex-0">

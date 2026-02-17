@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, Fragment } from "react";
 import {
   Plus, Trash2, MousePointerClick, AlertCircle,
   Component, RefreshCw, ChevronRight, X, Layers,
@@ -29,7 +29,6 @@ export function Step1SelectLayers({
   const [editingLayerIndex, setEditingLayerIndex] = useState<number | null>(null);
   const [showLayerPicker, setShowLayerPicker] = useState(false);
 
-  // Flatten nested layers for the picker
   const flatLayers = useMemo(
     () => (selectedComponent ? flattenLayers(selectedComponent.layers) : []),
     [selectedComponent]
@@ -73,6 +72,61 @@ export function Step1SelectLayers({
     setShowLayerPicker(false);
     setEditingLayerIndex(null);
   }, []);
+
+  // Reusable picker component
+  const renderPicker = () => (
+    <div className="border border-blue-200 rounded-lg bg-blue-50/50 overflow-hidden">
+      <div className="px-3 py-2 bg-blue-100/60 border-b border-blue-200 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <MousePointerClick className="w-3.5 h-3.5 text-blue-600" />
+          <span className="text-xs text-blue-800">
+            {editingLayerIndex !== null ? t("selectNewLayer") : t("chooseLayer")}
+          </span>
+        </div>
+        <Button variant="ghost" size="icon" className="h-5 w-5" onClick={handleCancelPicker}>
+          <X className="w-3 h-3" />
+        </Button>
+      </div>
+      <div className="p-2 flex flex-col gap-0.5">
+        {flatLayers.length === 0 && (
+          <p className="text-xs text-neutral-400 p-2 text-center">{t("noLayersInComp")}</p>
+        )}
+        {flatLayers.map((layer) => {
+          const isAlreadySelected = selectedLayers.some((l) => l.id === layer.id);
+          const isNested = !!layer.parentInstanceName;
+          return (
+            <button
+              key={layer.id}
+              onClick={() => handlePickLayer(layer)}
+              disabled={isAlreadySelected && editingLayerIndex === null}
+              className={`flex items-center gap-2.5 p-2 rounded-md text-left transition-colors ${
+                isNested ? "pl-7" : ""
+              } ${
+                isAlreadySelected && editingLayerIndex === null
+                  ? "opacity-40 cursor-not-allowed"
+                  : "hover:bg-blue-100 cursor-pointer"
+              }`}
+            >
+              <LayerIcon type={layer.type} />
+              <span className="text-sm text-neutral-900 flex-1 truncate">{layer.name}</span>
+              {layer.parentComponentName && (
+                <Badge
+                  variant="secondary"
+                  className="text-[10px] px-1.5 py-0 shrink-0 bg-violet-50 text-violet-600 border-violet-200"
+                >
+                  {t("inComponent")} {layer.parentComponentName}
+                </Badge>
+              )}
+              <span className="text-[10px] text-neutral-400">{layer.type}</span>
+              {isAlreadySelected && editingLayerIndex === null && (
+                <span className="text-[10px] text-blue-500">{t("added")}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 
   return (
     <div className="flex flex-col gap-5">
@@ -153,100 +207,58 @@ export function Step1SelectLayers({
           {selectedLayers.length > 0 && (
             <div className="flex flex-col gap-1.5">
               {selectedLayers.map((layer, index) => (
-                <div
-                  key={`${layer.id}-${index}`}
-                  className="group flex items-center gap-2.5 p-2.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 transition-colors"
-                >
-                  <LayerIcon type={layer.type} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-neutral-900 truncate">{layer.name}</p>
-                    {layer.parentComponentName ? (
-                      <p className="text-[10px] text-violet-600 truncate">
-                        {t("inComponent")} {layer.parentComponentName}
-                        {layer.parentInstanceName ? ` (${layer.parentInstanceName})` : ""}
-                      </p>
-                    ) : (
-                      <p className="text-xs text-neutral-400 truncate">
-                        {layer.type === "instance"
-                          ? layer.componentName
-                          : layer.type === "text"
-                            ? `"${layer.preview}"`
-                            : layer.type}
-                      </p>
-                    )}
+                <Fragment key={`${layer.id}-${index}`}>
+                  <div className="group flex items-center gap-2.5 p-2.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 transition-colors">
+                    <LayerIcon type={layer.type} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-neutral-900 truncate">{layer.name}</p>
+                      {layer.parentComponentName ? (
+                        <p className="text-[10px] text-violet-600 truncate">
+                          {t("inComponent")} {layer.parentComponentName}
+                          {layer.parentInstanceName ? ` (${layer.parentInstanceName})` : ""}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-neutral-400 truncate">
+                          {layer.type === "instance"
+                            ? layer.componentName
+                            : layer.type === "text"
+                              ? `"${layer.preview}"`
+                              : layer.type}
+                        </p>
+                      )}
+                    </div>
+                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">
+                      {layer.type}
+                    </Badge>
+                    <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleEditLayer(index)}>
+                        <RefreshCw className="w-3 h-3" />
+                      </Button>
+                      <Button
+                        variant="ghost" size="icon"
+                        className="h-6 w-6 text-red-500 hover:text-red-600"
+                        onClick={() => handleRemoveLayer(index)}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    </div>
                   </div>
-                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">
-                    {layer.type}
-                  </Badge>
-                  <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleEditLayer(index)}>
-                      <RefreshCw className="w-3 h-3" />
-                    </Button>
-                    <Button
-                      variant="ghost" size="icon"
-                      className="h-6 w-6 text-red-500 hover:text-red-600"
-                      onClick={() => handleRemoveLayer(index)}
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </Button>
-                  </div>
-                </div>
+
+                  {/* Inline picker when EDITING this layer */}
+                  {showLayerPicker && editingLayerIndex === index && (
+                    <div className="mt-1 mb-1">
+                      {renderPicker()}
+                    </div>
+                  )}
+                </Fragment>
               ))}
             </div>
           )}
 
-          {/* Layer Picker — uses flattenLayers for nested support */}
-          {showLayerPicker && (
-            <div className="mt-2 border border-blue-200 rounded-lg bg-blue-50/50 overflow-hidden">
-              <div className="px-3 py-2 bg-blue-100/60 border-b border-blue-200 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <MousePointerClick className="w-3.5 h-3.5 text-blue-600" />
-                  <span className="text-xs text-blue-800">
-                    {editingLayerIndex !== null ? t("selectNewLayer") : t("chooseLayer")}
-                  </span>
-                </div>
-                <Button variant="ghost" size="icon" className="h-5 w-5" onClick={handleCancelPicker}>
-                  <X className="w-3 h-3" />
-                </Button>
-              </div>
-              <div className="p-2 flex flex-col gap-0.5 max-h-48 overflow-y-auto">
-                {flatLayers.length === 0 && (
-                  <p className="text-xs text-neutral-400 p-2 text-center">{t("noLayersInComp")}</p>
-                )}
-                {flatLayers.map((layer) => {
-                  const isAlreadySelected = selectedLayers.some((l) => l.id === layer.id);
-                  const isNested = !!layer.parentInstanceName;
-                  return (
-                    <button
-                      key={layer.id}
-                      onClick={() => handlePickLayer(layer)}
-                      disabled={isAlreadySelected && editingLayerIndex === null}
-                      className={`flex items-center gap-2.5 p-2 rounded-md text-left transition-colors ${
-                        isNested ? "pl-7" : ""
-                      } ${
-                        isAlreadySelected && editingLayerIndex === null
-                          ? "opacity-40 cursor-not-allowed"
-                          : "hover:bg-blue-100 cursor-pointer"
-                      }`}
-                    >
-                      <LayerIcon type={layer.type} />
-                      <span className="text-sm text-neutral-900 flex-1 truncate">{layer.name}</span>
-                      {layer.parentComponentName && (
-                        <Badge
-                          variant="secondary"
-                          className="text-[10px] px-1.5 py-0 shrink-0 bg-violet-50 text-violet-600 border-violet-200"
-                        >
-                          {t("inComponent")} {layer.parentComponentName}
-                        </Badge>
-                      )}
-                      <span className="text-[10px] text-neutral-400">{layer.type}</span>
-                      {isAlreadySelected && editingLayerIndex === null && (
-                        <span className="text-[10px] text-blue-500">{t("added")}</span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
+          {/* Bottom picker when ADDING a new layer */}
+          {showLayerPicker && editingLayerIndex === null && (
+            <div className="mt-2">
+              {renderPicker()}
             </div>
           )}
 
@@ -260,8 +272,8 @@ export function Step1SelectLayers({
         </div>
       )}
 
-      {/* Next button */}
-      <div className="pt-2 border-t border-neutral-200">
+      {/* Sticky footer */}
+      <div className="sticky bottom-0 -mx-4 px-4 pt-3 pb-4 -mb-4 bg-white border-t border-neutral-200">
         <Button className="w-full" onClick={onNext} disabled={selectedLayers.length === 0}>
           {t("next")}
           <ChevronRight className="w-4 h-4" />

@@ -42,7 +42,6 @@ function AppContent() {
   const [conversionResult, setConversionResult] = useState<ConversionResult | null>(null);
   const [conversionError, setConversionError] = useState<string | null>(null);
 
-  // ── Listen for sandbox messages (single handler via typed hook) ──
   usePluginMessage(
     useCallback((msg) => {
       switch (msg.type) {
@@ -85,7 +84,6 @@ function AppContent() {
     }, [])
   );
 
-  // ── Actions ──
   const handleRequestSelection = useCallback(() => {
     setIsSelecting(true);
     setSelectionError(null);
@@ -147,9 +145,9 @@ function AppContent() {
           .map((m) => ({
             id: m.id,
             sourcePath: m.sourceLayer.path,
-            sourceIndexPath: m.sourceLayer.indexPath || [],   // ← AJOUT
+            sourceIndexPath: m.sourceLayer.indexPath || [],
             targetPath: m.targetLayer!.path,
-            targetIndexPath: m.targetLayer!.indexPath || [],  // ← AJOUT
+            targetIndexPath: m.targetLayer!.indexPath || [],
             layerType: m.sourceLayer.type,
           })),
       });
@@ -178,8 +176,8 @@ function AppContent() {
 
   return (
     <div className="flex flex-col h-screen bg-white">
-      {/* Header */}
-      <div className="px-4 py-3 bg-white border-b border-neutral-200 flex items-center gap-3">
+      {/* Header — sticky */}
+      <div className="px-4 py-3 bg-white border-b border-neutral-200 flex items-center gap-3 shrink-0">
         <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-blue-600 flex items-center justify-center shrink-0">
           <Repeat className="w-3.5 h-3.5 text-white" />
         </div>
@@ -195,64 +193,71 @@ function AppContent() {
           title={lang === "fr" ? "Switch to English" : "Passer en français"}
         >
           <Globe className="w-3.5 h-3.5" />
-         </Button>
+        </Button>
       </div>
 
-      {/* Step Indicator */}
-      <div className="px-4 py-3 bg-white border-b border-neutral-200">
-        <StepIndicator currentStep={currentStep} steps={steps} />
+      {/* Step Indicator — sticky */}
+      <div className="px-4 py-3 bg-white border-b border-neutral-200 shrink-0">
+        <StepIndicator
+          currentStep={currentStep}
+          steps={steps}
+          isComplete={conversionState === "complete"}
+        />
       </div>
 
-      {/* Step Title */}
-      <div className="px-4 pt-4 pb-1">
-        <h2 className="text-sm text-neutral-900">{steps[currentStep - 1].label}</h2>
-        <p className="text-xs text-neutral-500 mt-0.5">{steps[currentStep - 1].description}</p>
-      </div>
+      {/* Scrollable area — contains step title + step content */}
+      <div className="flex-1 overflow-y-auto">
+        {/* Step Title — scrolls with content */}
+        <div className="px-4 pt-4 pb-1">
+          <h2 className="text-sm text-neutral-900">{steps[currentStep - 1].label}</h2>
+          <p className="text-xs text-neutral-500 mt-0.5">{steps[currentStep - 1].description}</p>
+        </div>
 
-      {/* Step Content */}
-      <div className="px-4 py-4 flex-1 overflow-y-auto">
-        {currentStep === 1 && (
-          <Step1SelectLayers
-            selectedComponent={selectedComponent}
-            selectedLayers={selectedLayers}
-            onLayersChange={setSelectedLayers}
-            isSelecting={isSelecting}
-            selectionError={selectionError}
-            onRequestSelection={handleRequestSelection}
-            onClearComponent={handleClearComponent}
-            onNext={handleGoToStep2}
-          />
-        )}
-        {currentStep === 2 && (
-          <Step2Mapping
-            selectedLayers={selectedLayers}
-            mappings={mappings}
-            onMappingsChange={setMappings}
-            newComponent={newComponent}
-            isSelectingNew={isSelectingNew}
-            newComponentError={newComponentError}
-            onRequestNewComponent={handleRequestNewComponent}
-            onClearNewComponent={handleClearNewComponent}
-            onNext={handleGoToStep3}
-            onBack={() => setCurrentStep(1)}
-          />
-        )}
-        {currentStep === 3 && selectedComponent && newComponent && (
-          <Step3Conversion
-            oldComponent={selectedComponent}
-            newComponent={newComponent}
-            mappings={mappings}
-            conversionState={conversionState}
-            progress={progress}
-            progressInfo={progressInfo}
-            result={conversionResult}
-            conversionError={conversionError}
-            onRunConversion={handleRunConversion}
-            onFocusNode={handleFocusNode}
-            onBack={() => setCurrentStep(2)}
-            onReset={handleReset}
-          />
-        )}
+        {/* Step Content */}
+        <div className="px-4 py-4">
+          {currentStep === 1 && (
+            <Step1SelectLayers
+              selectedComponent={selectedComponent}
+              selectedLayers={selectedLayers}
+              onLayersChange={setSelectedLayers}
+              isSelecting={isSelecting}
+              selectionError={selectionError}
+              onRequestSelection={handleRequestSelection}
+              onClearComponent={handleClearComponent}
+              onNext={handleGoToStep2}
+            />
+          )}
+          {currentStep === 2 && (
+            <Step2Mapping
+              selectedLayers={selectedLayers}
+              mappings={mappings}
+              onMappingsChange={setMappings}
+              newComponent={newComponent}
+              isSelectingNew={isSelectingNew}
+              newComponentError={newComponentError}
+              onRequestNewComponent={handleRequestNewComponent}
+              onClearNewComponent={handleClearNewComponent}
+              onNext={handleGoToStep3}
+              onBack={() => setCurrentStep(1)}
+            />
+          )}
+          {currentStep === 3 && selectedComponent && newComponent && (
+            <Step3Conversion
+              oldComponent={selectedComponent}
+              newComponent={newComponent}
+              mappings={mappings}
+              conversionState={conversionState}
+              progress={progress}
+              progressInfo={progressInfo}
+              result={conversionResult}
+              conversionError={conversionError}
+              onRunConversion={handleRunConversion}
+              onFocusNode={handleFocusNode}
+              onBack={() => setCurrentStep(2)}
+              onReset={handleReset}
+            />
+          )}
+        </div>
       </div>
     </div>
   );
