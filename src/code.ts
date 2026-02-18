@@ -59,7 +59,12 @@ function collectLayers(
   // INSTANCE — include AND recurse into children
   if (node.type === "INSTANCE") {
     var inst = node as InstanceNode;
-    var compName = inst.mainComponent ? inst.mainComponent.name : "Inconnu";
+    var compName: string;
+    try {
+      compName = inst.mainComponent ? inst.mainComponent.name : "Inconnu";
+    } catch (e) {
+      compName = "Inconnu";
+    }
     var myPath = parentPath.concat([node.name]);
     var item: LayerInfo = {
       id: node.id,
@@ -159,9 +164,12 @@ function buildComponentLayers(
 
 // ─── Helpers ────────────────────────────────────────────
 
-function getMainComponent(node: SceneNode): ComponentNode | null {
+async function getMainComponent(node: SceneNode): Promise<ComponentNode | null> {
   if (node.type === "COMPONENT") return node;
-  if (node.type === "INSTANCE") return (node as InstanceNode).mainComponent;
+  if (node.type === "INSTANCE") {
+    // getMainComponentAsync is reliable for both local and library components
+    return await (node as InstanceNode).getMainComponentAsync();
+  }
   return null;
 }
 
@@ -492,82 +500,100 @@ function applyChildFills(
 figma.ui.onmessage = async function (msg: Record<string, any>) {
   // ── Sélection du composant source ──
   if (msg.type === "get-selection") {
-    var selection = figma.currentPage.selection;
+    try {
+      var selection = figma.currentPage.selection;
 
-    if (selection.length === 0) {
+      if (selection.length === 0) {
+        figma.ui.postMessage({
+          type: "selection-result",
+          component: null,
+          error:
+            "Aucun élément sélectionné. Sélectionnez une instance ou un composant dans le canvas.",
+        });
+        return;
+      }
+
+      var mainComp = await getMainComponent(selection[0]);
+      if (!mainComp) {
+        figma.ui.postMessage({
+          type: "selection-result",
+          component: null,
+          error:
+            "L'élément sélectionné n'est ni un composant ni une instance de composant.",
+        });
+        return;
+      }
+
+      var layerSource =
+        selection[0].type === "INSTANCE" ? selection[0] : mainComp;
+      var layers = buildComponentLayers(layerSource as any);
+
+      figma.ui.postMessage({
+        type: "selection-result",
+        component: {
+          id: mainComp.id,
+          name: mainComp.name,
+          componentKey: mainComp.key,
+          layers: layers,
+        } as ComponentInfo,
+      });
+    } catch (err: any) {
+      console.log("[SG] ❌ ERREUR get-selection:", err);
       figma.ui.postMessage({
         type: "selection-result",
         component: null,
-        error:
-          "Aucun élément sélectionné. Sélectionnez une instance ou un composant dans le canvas.",
+        error: err && err.message ? err.message : "Erreur lors de la lecture du composant.",
       });
-      return;
     }
-
-    var mainComp = getMainComponent(selection[0]);
-    if (!mainComp) {
-      figma.ui.postMessage({
-        type: "selection-result",
-        component: null,
-        error:
-          "L'élément sélectionné n'est ni un composant ni une instance de composant.",
-      });
-      return;
-    }
-
-    var layerSource =
-      selection[0].type === "INSTANCE" ? selection[0] : mainComp;
-    var layers = buildComponentLayers(layerSource as any);
-
-    figma.ui.postMessage({
-      type: "selection-result",
-      component: {
-        id: mainComp.id,
-        name: mainComp.name,
-        componentKey: mainComp.key,
-        layers: layers,
-      } as ComponentInfo,
-    });
   }
 
   // ── Sélection du composant cible ──
   if (msg.type === "get-new-component") {
-    var sel = figma.currentPage.selection;
+    try {
+      var sel = figma.currentPage.selection;
 
-    if (sel.length === 0) {
+      if (sel.length === 0) {
+        figma.ui.postMessage({
+          type: "new-component-result",
+          component: null,
+          error:
+            "Aucun élément sélectionné. Sélectionnez le nouveau composant dans le canvas.",
+        });
+        return;
+      }
+
+      var newMain = await getMainComponent(sel[0]);
+      if (!newMain) {
+        figma.ui.postMessage({
+          type: "new-component-result",
+          component: null,
+          error:
+            "L'élément sélectionné n'est ni un composant ni une instance de composant.",
+        });
+        return;
+      }
+
+      var newLayerSource =
+        sel[0].type === "INSTANCE" ? sel[0] : newMain;
+      var newLayers = buildComponentLayers(newLayerSource as any);
+
+      figma.ui.postMessage({
+        type: "new-component-result",
+        component: {
+          id: newMain.id,
+          name: newMain.name,
+          componentKey: newMain.key,
+          layers: newLayers,
+        } as ComponentInfo,
+      });
+    } catch (err: any) {
+      console.log("[SG] ❌ ERREUR get-new-component:", err);
       figma.ui.postMessage({
         type: "new-component-result",
         component: null,
-        error:
-          "Aucun élément sélectionné. Sélectionnez le nouveau composant dans le canvas.",
+        error: err && err.message ? err.message : "Erreur lors de la lecture du composant.",
       });
-      return;
     }
-
-    var newMain = getMainComponent(sel[0]);
-    if (!newMain) {
-      figma.ui.postMessage({
-        type: "new-component-result",
-        component: null,
-        error:
-          "L'élément sélectionné n'est ni un composant ni une instance de composant.",
-      });
-      return;
-    }
-
-    var newLayerSource =
-      sel[0].type === "INSTANCE" ? sel[0] : newMain;
-    var newLayers = buildComponentLayers(newLayerSource as any);
-
-    figma.ui.postMessage({
-      type: "new-component-result",
-      component: {
-        id: newMain.id,
-        name: newMain.name,
-        componentKey: newMain.key,
-        layers: newLayers,
-      } as ComponentInfo,
-    });
   }
 
   // ── Focus sur un node ──
