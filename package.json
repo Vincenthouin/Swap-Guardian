@@ -5,10 +5,10 @@
   "main": "index.js",
  "scripts": {
     "build:ui": "vite build",
-    "build:sandbox": "esbuild src/code.ts --bundle --outfile=dist/code.js --target=es2017",
+    "build:sandbox": "esbuild src/code.ts --bundle --outfile=dist/code.js --target=es6",
     "build": "npm run build:ui && npm run build:sandbox",
     "dev:ui": "vite build --watch",
-    "dev:sandbox": "esbuild src/code.ts --bundle --outfile=dist/code.js --target=es2017 --watch"
+    "dev:sandbox": "esbuild src/code.ts --bundle --outfile=dist/code.js --target=es6 --watch"
 },
   "keywords": [],
   "author": "",
