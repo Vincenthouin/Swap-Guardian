@@ -1,4 +1,4 @@
-console.log("[SG] ★ Plugin sandbox loaded (v12.1 — flicker-free swap with visibility toggle)");
+console.log("[SG] ★ Plugin sandbox loaded (v12)");
 
 figma.showUI(__html__, { width: 400, height: 600 });
 
@@ -51,8 +51,15 @@ async function ensurePagesLoaded(): Promise<void> {
 
 var ASYNC_TIMEOUT_MS = 500;
 
+// ★ Perf (Axe 3): Font load cache — avoids redundant loadFontAsync calls
+var _fontLoadCache: Record<string, Promise<boolean>> = {};
+
 function safeLoadFontAsync(font: FontName): Promise<boolean> {
-  return new Promise(function (resolve) {
+  // ★ Perf (Axe 3): Return cached promise if already loading/loaded
+  var _fk = font.family + "::" + font.style;
+  if (_fontLoadCache[_fk]) return _fontLoadCache[_fk];
+
+  var p = new Promise<boolean>(function (resolve) {
     var done = false;
 
     // Timeout fallback — fires even if Figma's Promise hangs
@@ -78,6 +85,9 @@ function safeLoadFontAsync(font: FontName): Promise<boolean> {
       if (!done) { done = true; resolve(false); }
     }
   });
+
+  _fontLoadCache[_fk] = p;
+  return p;
 }
 
 function safeImportComponentByKeyAsync(key: string): Promise<ComponentNode | null> {
@@ -108,7 +118,7 @@ function safeImportComponentByKeyAsync(key: string): Promise<ComponentNode | nul
 }
 
 // ★ v12: Safe wrapper for getMainComponentAsync — the CORRECT API for dynamic-page
-var ASYNC_TIMEOUT_NESTED_MS = 3000; // Longer timeout for library component resolution
+var ASYNC_TIMEOUT_NESTED_MS = 3000;
 
 function safeGetMainComponentAsync(inst: InstanceNode): Promise<ComponentNode | null> {
   return new Promise(function (resolve) {
@@ -656,12 +666,22 @@ function applyChildFills(node: SceneNode, overrides: ChildFillOverride[], preser
 
 // ─── Nested component resolution ────────────────────────
 
+// ★ Perf (Axe 2): Cache for resolveNestedComponentInfo — keyed by name + shallow fingerprint
+var _nestedInfoCache: Record<string, { key: string | null; id: string | null; compNode: ComponentNode | null; }> = {};
+
 // ★ v12: Now ASYNC — uses getMainComponentAsync (required by dynamic-page)
 async function resolveNestedComponentInfo(nestedInst: InstanceNode): Promise<{
   key: string | null;
   id: string | null;
   compNode: ComponentNode | null;
 }> {
+  // ★ Perf (Axe 2): Check cache by name + structural fingerprint(depth=0)
+  var _cacheKey = nestedInst.name + "::" + buildStrictFingerprint(nestedInst, 0);
+  if (_nestedInfoCache[_cacheKey]) {
+    console.log("[SG]   ★ Cache HIT for nested '" + nestedInst.name + "'");
+    return _nestedInfoCache[_cacheKey];
+  }
+
   // ★ Strategy 1: getMainComponentAsync — the CORRECT API for dynamic-page mode
   // Figma explicitly says: "Cannot call mainComponent with documentAccess: dynamic-page.
   // Use node.getMainComponentAsync instead."
@@ -672,18 +692,40 @@ async function resolveNestedComponentInfo(nestedInst: InstanceNode): Promise<{
     try { mcKey = mcRef.key; } catch (e) { console.log("[SG]   getMainComponentAsync.key threw: " + e); }
     try { mcId = mcRef.id; } catch (e) { console.log("[SG]   getMainComponentAsync.id threw: " + e); }
     console.log("[SG]   ✅ getMainComponentAsync resolved: '" + (mcRef.name || "?") + "' key:" + mcKey);
-    return { key: mcKey, id: mcId, compNode: mcRef };
+    var _res1 = { key: mcKey, id: mcId, compNode: mcRef };
+    _nestedInfoCache[_cacheKey] = _res1;
+    return _res1;
   }
 
   // ★ Strategy 2: Fingerprint-based local search (fallback if async timed out)
   var strictFP = buildStrictFingerprint(nestedInst, 2);
   var relaxedFP = buildRelaxedFingerprint(nestedInst, 2);
   var found = findComponentByFingerprint(strictFP, relaxedFP, nestedInst.name);
-  if (found) { return { key: found.key, id: found.id, compNode: found }; }
-  return { key: null, id: null, compNode: null };
+  if (found) { var _res2 = { key: found.key, id: found.id, compNode: found }; _nestedInfoCache[_cacheKey] = _res2; return _res2; }
+  var _res3 = { key: null, id: null, compNode: null };
+  _nestedInfoCache[_cacheKey] = _res3;
+  return _res3;
 }
 
 // ─── Clone-based replacement ────────────────────────────
+
+// ★ UX: Collect all fonts from a component/instance tree for pre-loading
+function collectFontsFromTree(node: SceneNode, fonts: Record<string, FontName>): void {
+  if (node.type === "TEXT") {
+    var fn = (node as TextNode).fontName;
+    if (fn !== figma.mixed) {
+      var fk = (fn as FontName).family + "::" + (fn as FontName).style;
+      if (!fonts[fk]) fonts[fk] = fn as FontName;
+    }
+    // For mixed fonts, we skip pre-loading (rare case, handled at write time)
+  }
+  if ("children" in node) {
+    var kids = (node as any).children as SceneNode[];
+    for (var ci = 0; ci < kids.length; ci++) {
+      collectFontsFromTree(kids[ci], fonts);
+    }
+  }
+}
 
 function getChildIndex(node: SceneNode): number {
   var parent = node.parent;
@@ -899,6 +941,18 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
     try {
       await ensurePagesLoaded();
 
+      // ★ Perf (Axe 1): Build component-by-key index once for entire conversion
+      var _compByKey: Record<string, ComponentNode> = {};
+      // ★ Perf (Axe 2): Reset nested info cache for this conversion run
+      _nestedInfoCache = {};
+      for (var _bpi = 0; _bpi < figma.root.children.length; _bpi++) {
+        var _bcomps = figma.root.children[_bpi].findAllWithCriteria({ types: ["COMPONENT"] });
+        for (var _bci = 0; _bci < _bcomps.length; _bci++) {
+          _compByKey[_bcomps[_bci].key] = _bcomps[_bci];
+        }
+      }
+      console.log("[SG] ★ Component index: " + Object.keys(_compByKey).length + " entries");
+
       // ── Resolve NEW component or template ──
       var newComp: ComponentNode | null = null;
       var templateInstance: InstanceNode | null = null;
@@ -931,14 +985,8 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
           return;
         }
       } else {
-        // ★ Search locally FIRST (instant) before trying importByKey
-        for (var pi2 = 0; pi2 < figma.root.children.length; pi2++) {
-          var lc = figma.root.children[pi2].findAllWithCriteria({ types: ["COMPONENT"] });
-          for (var ci2 = 0; ci2 < lc.length; ci2++) {
-            if (lc[ci2].key === newComponentKey) { newComp = lc[ci2]; break; }
-          }
-          if (newComp) break;
-        }
+        // ★ Search locally FIRST (instant via index) before trying importByKey
+        newComp = _compByKey[newComponentKey] || null;
         if (!newComp) {
           newComp = await safeImportComponentByKeyAsync(newComponentKey);
         }
@@ -959,14 +1007,8 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
         oldStrictFP = extractFingerprint(oldComponentKey);
         console.log("[SG] Matching by encoded strict fingerprint");
       } else {
-        // Find old component by key → build fingerprints from it
-        for (var pi2 = 0; pi2 < figma.root.children.length; pi2++) {
-          var lc = figma.root.children[pi2].findAllWithCriteria({ types: ["COMPONENT"] });
-          for (var ci2 = 0; ci2 < lc.length; ci2++) {
-            if (lc[ci2].key === oldComponentKey) { oldComp = lc[ci2]; break; }
-          }
-          if (oldComp) break;
-        }
+        // Find old component by key → build fingerprints from it (via index)
+        oldComp = _compByKey[oldComponentKey] || null;
         if (!oldComp) {
           oldComp = await safeImportComponentByKeyAsync(oldComponentKey);
         }
@@ -1065,6 +1107,20 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
         return;
       }
 
+      // ★ UX: Pre-load all fonts from the NEW component BEFORE the swap loop.
+      // This eliminates async font loading during re-apply, making swap+apply
+      // effectively synchronous so Figma never renders intermediate default state.
+      var _preloadFonts: Record<string, FontName> = {};
+      var _fontSource: SceneNode | null = newComp || templateInstance;
+      if (_fontSource) {
+        collectFontsFromTree(_fontSource, _preloadFonts);
+        var _pfKeys = Object.keys(_preloadFonts);
+        for (var _pfi = 0; _pfi < _pfKeys.length; _pfi++) {
+          await safeLoadFontAsync(_preloadFonts[_pfKeys[_pfi]]);
+        }
+        console.log("[SG] ★ Pre-loaded " + _pfKeys.length + " fonts from new component");
+      }
+
       var converted = 0;
       var failedInstances: { id: string; name: string; pageName: string; reason: string; }[] = [];
       var pageStats: Record<string, number> = {};
@@ -1132,13 +1188,8 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
               // ★ Use compNode from mainComponent first, then fallback to local key search
               var localComp: ComponentNode | null = nestedInfo.compNode;
               if (!localComp && nestedInfo.key) {
-                // compNode was null but we have a key — search locally
-                for (var lpi = 0; lpi < figma.root.children.length && !localComp; lpi++) {
-                  var lcs = figma.root.children[lpi].findAllWithCriteria({ types: ["COMPONENT"] });
-                  for (var lci = 0; lci < lcs.length; lci++) {
-                    if (lcs[lci].key === nestedInfo.key) { localComp = lcs[lci]; break; }
-                  }
-                }
+                // compNode was null but we have a key — search via index
+                localComp = _compByKey[nestedInfo.key] || null;
               }
 
               var instDirectFills: Paint[] | null = null;
@@ -1181,15 +1232,12 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
           }
 
           // ──────────────────────────────────────────────
-          // 2. SWAP or CLONE  (★ v12.1: hide during transition to avoid flicker)
+          // 2. SWAP or CLONE
           // ──────────────────────────────────────────────
           var targetInstance: InstanceNode;
-          var savedVisible = instance.visible;
-          try { instance.visible = false; } catch (e) { }
 
           if (useCloneMode && templateInstance) {
             targetInstance = replaceWithClone(instance, templateInstance);
-            try { targetInstance.visible = false; } catch (e) { }
             console.log("[SG]   [" + label + "] CLONE → '" + targetInstance.name + "'");
           } else if (newComp) {
             instance.swapComponent(newComp);
@@ -1293,16 +1341,11 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
             }
           }
 
-          // ★ v12.1: Restore visibility
-          try { targetInstance.visible = savedVisible; } catch (e) { }
-
           converted++;
           pageStats[pageName] = (pageStats[pageName] || 0) + 1;
           console.log("[SG]   [" + label + "] ✅ Conversion réussie");
         } catch (err: any) {
           console.log("[SG] ❌ ERREUR sur " + label + ":", err);
-          // ★ v12.1: Restore visibility even on error
-          try { if (typeof savedVisible !== "undefined") instance.visible = savedVisible; } catch (e) { }
           failedInstances.push({ id: instance.id, name: instance.name, pageName: pageName,
             reason: err && err.message ? err.message : "Erreur inconnue" });
         }
