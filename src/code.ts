@@ -33,6 +33,15 @@ interface ChildFillOverride {
 
 // ─── Dynamic page support ───────────────────────────────
 
+// ★ Anti-freeze: Yield to the Figma UI event loop so the canvas stays responsive.
+// CRITICAL: In the Figma WASM sandbox, setTimeout/Promise.resolve do NOT truly yield.
+// They resolve as synchronous microtasks within the same WASM execution frame.
+// Only REAL async Figma API calls (that cross the WASM→host bridge) release the thread.
+// figma.getNodeByIdAsync on the root document is very cheap and always succeeds.
+async function yieldToUI(): Promise<void> {
+  await figma.getNodeByIdAsync(figma.root.id);
+}
+
 var pagesLoaded = false;
 
 async function ensurePagesLoaded(): Promise<void> {
@@ -201,7 +210,33 @@ function findComponentByFingerprint(
   relaxedFP: string,
   instanceName: string
 ): ComponentNode | null {
-  // Pass 1: strict match (exact structure including instance names)
+
+  // ★ Anti-freeze: If the global index is populated (during conversion),
+  // search through it instead of re-scanning all pages with findAllWithCriteria.
+  // This avoids 4+ full page scans and cuts the time from seconds to milliseconds.
+  var _gKeys = Object.keys(_compByKeyGlobal);
+  if (_gKeys.length > 0) {
+    // Pass 1: strict match using index
+    for (var gi = 0; gi < _gKeys.length; gi++) {
+      var gComp = _compByKeyGlobal[_gKeys[gi]];
+      if (buildStrictFingerprint(gComp, 2) === strictFP) {
+        console.log("[SG] ✅ Strict FP match (index): '" + gComp.name + "'");
+        return gComp;
+      }
+    }
+    // Pass 2: relaxed match using index
+    for (var gi2 = 0; gi2 < _gKeys.length; gi2++) {
+      var gComp2 = _compByKeyGlobal[_gKeys[gi2]];
+      if (buildRelaxedFingerprint(gComp2, 2) === relaxedFP) {
+        console.log("[SG] ✅ Relaxed FP match (index): '" + gComp2.name + "'");
+        return gComp2;
+      }
+    }
+    console.log("[SG] ⚠ No index fingerprint match for '" + instanceName + "' — likely a library component");
+    return null;
+  }
+
+  // Fallback: scan all pages (used outside conversion — rarely reached now)
   for (var pi = 0; pi < figma.root.children.length; pi++) {
     var page = figma.root.children[pi];
     var comps = page.findAllWithCriteria({ types: ["COMPONENT"] });
@@ -212,7 +247,6 @@ function findComponentByFingerprint(
       }
     }
   }
-  // Pass 1b: strict match in component sets
   for (var pi1b = 0; pi1b < figma.root.children.length; pi1b++) {
     var page1b = figma.root.children[pi1b];
     var sets1b = page1b.findAllWithCriteria({ types: ["COMPONENT_SET"] });
@@ -221,25 +255,20 @@ function findComponentByFingerprint(
       for (var vi = 0; vi < set.children.length; vi++) {
         var v = set.children[vi];
         if (v.type === "COMPONENT" && buildStrictFingerprint(v, 2) === strictFP) {
-          console.log("[SG] ✅ Strict FP match (variant): '" + v.name + "' in '" + set.name + "'");
           return v as ComponentNode;
         }
       }
     }
   }
-
-  // Pass 2: relaxed match (ignoring instance names — catches component updates)
   for (var pi2 = 0; pi2 < figma.root.children.length; pi2++) {
     var page2 = figma.root.children[pi2];
     var comps2 = page2.findAllWithCriteria({ types: ["COMPONENT"] });
     for (var ci2 = 0; ci2 < comps2.length; ci2++) {
       if (buildRelaxedFingerprint(comps2[ci2], 2) === relaxedFP) {
-        console.log("[SG] ✅ Relaxed FP match: '" + comps2[ci2].name + "' on page '" + page2.name + "'");
         return comps2[ci2];
       }
     }
   }
-  // Pass 2b: relaxed in component sets
   for (var pi2b = 0; pi2b < figma.root.children.length; pi2b++) {
     var page2b = figma.root.children[pi2b];
     var sets2b = page2b.findAllWithCriteria({ types: ["COMPONENT_SET"] });
@@ -248,7 +277,6 @@ function findComponentByFingerprint(
       for (var vi2 = 0; vi2 < set2.children.length; vi2++) {
         var v2 = set2.children[vi2];
         if (v2.type === "COMPONENT" && buildRelaxedFingerprint(v2, 2) === relaxedFP) {
-          console.log("[SG] ✅ Relaxed FP match (variant): '" + v2.name + "' in '" + set2.name + "'");
           return v2 as ComponentNode;
         }
       }
@@ -291,6 +319,32 @@ function resolveComponentFromInstance(
   console.log("[SG] RelaxedFP: " + relaxedFP.substring(0, 100) + (relaxedFP.length > 100 ? "..." : ""));
   var comp = findComponentByFingerprint(strictFP, relaxedFP, inst.name);
   return { comp: comp, strictFP: strictFP, relaxedFP: relaxedFP };
+}
+
+// ★ Anti-freeze: Async-fast version for auto-upgrade check in CLONE mode.
+// Uses mainComponent (sync) → getMainComponentAsync (async) → gives up.
+// NEVER falls back to the expensive findComponentByFingerprint page scan.
+async function resolveComponentFromInstanceFast(
+  inst: InstanceNode
+): Promise<ComponentNode | null> {
+  // Try sync first (works on desktop for local components)
+  try {
+    var mc = inst.mainComponent;
+    if (mc) {
+      console.log("[SG] Auto-upgrade: resolved sync → '" + mc.name + "'");
+      return mc;
+    }
+  } catch (_e) { /* expected on Web */ }
+  // Try async (works for library components)
+  try {
+    var mcAsync = await inst.getMainComponentAsync();
+    if (mcAsync) {
+      console.log("[SG] Auto-upgrade: resolved async → '" + mcAsync.name + "'");
+      return mcAsync;
+    }
+  } catch (_e2) { /* can fail for detached instances */ }
+  console.log("[SG] Auto-upgrade: could not resolve '" + inst.name + "' — staying in CLONE mode");
+  return null;
 }
 
 // ─── Layer Tree Builder ─────────────────────────────────
@@ -669,6 +723,10 @@ function applyChildFills(node: SceneNode, overrides: ChildFillOverride[], preser
 // ★ Perf (Axe 2): Cache for resolveNestedComponentInfo — keyed by name + shallow fingerprint
 var _nestedInfoCache: Record<string, { key: string | null; id: string | null; compNode: ComponentNode | null; }> = {};
 
+// ★ Perf (Axe 1): Module-level component-by-key index — built once per conversion run.
+// Used by findComponentByFingerprint to avoid re-scanning all pages with findAllWithCriteria.
+var _compByKeyGlobal: Record<string, ComponentNode> = {};
+
 // ★ v12: Now ASYNC — uses getMainComponentAsync (required by dynamic-page)
 async function resolveNestedComponentInfo(nestedInst: InstanceNode): Promise<{
   key: string | null;
@@ -803,7 +861,8 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
   // ── Sélection du composant source ──
   if (msg.type === "get-selection") {
     try {
-      await ensurePagesLoaded();
+      // ★ Anti-freeze: Do NOT load all pages here — only needed at conversion time.
+      // The selected node is already on the current page, so we can read it directly.
       var selection = figma.currentPage.selection;
       console.log("[SG] get-selection: " + selection.length + " node(s)");
 
@@ -827,17 +886,34 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
 
       if (selectedNode.type === "INSTANCE") {
         var inst = selectedNode as InstanceNode;
-        var resolved = resolveComponentFromInstance(inst);
         var layers2 = buildComponentLayers(inst);
 
-        if (resolved.comp) {
-          console.log("[SG] ✅ Resolved locally: '" + resolved.comp.name + "' key=" + resolved.comp.key);
+        // ★ Anti-freeze: Try sync mainComponent FIRST (instant, no page scan).
+        // Only if that fails (Web+dynamic-page), fall through to fingerprint mode.
+        // This avoids the expensive resolveComponentFromInstance → findComponentByFingerprint
+        // which scans ALL pages × ALL components — deferred to conversion time instead.
+        var directKey: string | null = null;
+        var directCompName: string | null = null;
+        try {
+          if (inst.mainComponent) {
+            directKey = inst.mainComponent.key;
+            directCompName = inst.mainComponent.name;
+          }
+        } catch (e) { /* Expected on Web+dynamic-page */ }
+
+        if (directKey) {
+          console.log("[SG] ✅ Resolved via mainComponent (sync): '" + directCompName + "' key=" + directKey);
           figma.ui.postMessage({ type: "selection-result",
-            component: { id: resolved.comp.id, name: resolved.comp.name, componentKey: resolved.comp.key, layers: layers2 } as ComponentInfo });
+            component: { id: inst.id, name: directCompName || inst.name, componentKey: directKey, layers: layers2 } as ComponentInfo });
         } else {
-          // Library component → encode STRICT fingerprint (distinguishes versions)
-          var pseudoKey = FP_PREFIX + resolved.strictFP;
-          console.log("[SG] ✅ Library component (fingerprint mode): '" + inst.name + "'");
+          // Web+dynamic-page: mainComponent not available → use fingerprint mode
+          // This is fast: just builds the FP string from the current node, no page scanning
+          var strictFP = buildStrictFingerprint(inst, 2);
+          var relaxedFP = buildRelaxedFingerprint(inst, 2);
+          console.log("[SG] StrictFP: " + strictFP.substring(0, 100) + (strictFP.length > 100 ? "..." : ""));
+          console.log("[SG] RelaxedFP: " + relaxedFP.substring(0, 100) + (relaxedFP.length > 100 ? "..." : ""));
+          var pseudoKey = FP_PREFIX + strictFP;
+          console.log("[SG] ✅ Fingerprint mode (deferred resolution): '" + inst.name + "'");
           figma.ui.postMessage({ type: "selection-result",
             component: { id: inst.id, name: inst.name, componentKey: pseudoKey, layers: layers2 } as ComponentInfo });
         }
@@ -857,7 +933,8 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
   // ── Sélection du composant cible ──
   if (msg.type === "get-new-component") {
     try {
-      await ensurePagesLoaded();
+      // ★ Anti-freeze: No page loading needed here.
+      // COMPONENT → direct key, INSTANCE → template mode (uses node ID only).
       var sel = figma.currentPage.selection;
       console.log("[SG] get-new-component: " + sel.length + " node(s)");
 
@@ -939,19 +1016,41 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
     console.log("[SG] Mode: " + (useCloneMode ? "CLONE" : "SWAP") + " | Match: " + (useFingerprintMatch ? "FINGERPRINT" : "KEY"));
 
     try {
-      await ensurePagesLoaded();
+      // ★ Anti-freeze: Only load all pages when we actually need them.
+      // scope="page" + FINGERPRINT mode: only search current page, no index needed → skip!
+      // scope="all" or KEY mode: need all pages for instance search or key-based index.
+      var needAllPages = (scope !== "page") || !useFingerprintMatch;
+      if (needAllPages) {
+        await ensurePagesLoaded();
+      } else {
+        console.log("[SG] ★ Skipping loadAllPages (scope=page + fingerprint mode)");
+      }
 
       // ★ Perf (Axe 1): Build component-by-key index once for entire conversion
+      // ONLY build in KEY mode (SWAP) — in FINGERPRINT+CLONE mode, the index is
+      // never used directly and scanning 16+ pages causes a 10+ second freeze.
       var _compByKey: Record<string, ComponentNode> = {};
       // ★ Perf (Axe 2): Reset nested info cache for this conversion run
       _nestedInfoCache = {};
-      for (var _bpi = 0; _bpi < figma.root.children.length; _bpi++) {
-        var _bcomps = figma.root.children[_bpi].findAllWithCriteria({ types: ["COMPONENT"] });
-        for (var _bci = 0; _bci < _bcomps.length; _bci++) {
-          _compByKey[_bcomps[_bci].key] = _bcomps[_bci];
+      // ★ Perf (Axe 3): Reset font load cache for this conversion run
+      _fontLoadCache = {};
+      _compByKeyGlobal = {};
+
+      if (!useFingerprintMatch) {
+        // KEY mode: need the index for direct key lookups
+        console.log("[SG] Building component index (KEY mode)...");
+        for (var _bpi = 0; _bpi < figma.root.children.length; _bpi++) {
+          var _bcomps = figma.root.children[_bpi].findAllWithCriteria({ types: ["COMPONENT"] });
+          for (var _bci = 0; _bci < _bcomps.length; _bci++) {
+            _compByKey[_bcomps[_bci].key] = _bcomps[_bci];
+          }
+          await yieldToUI();
         }
+        _compByKeyGlobal = _compByKey;
+        console.log("[SG] ★ Component index: " + Object.keys(_compByKey).length + " entries");
+      } else {
+        console.log("[SG] ★ Skipping component index build (FINGERPRINT mode — not needed)");
       }
-      console.log("[SG] ★ Component index: " + Object.keys(_compByKey).length + " entries");
 
       // ── Resolve NEW component or template ──
       var newComp: ComponentNode | null = null;
@@ -964,17 +1063,16 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
           templateInstance = tplNode as InstanceNode;
           console.log("[SG] Template instance found: '" + templateInstance.name + "'");
 
-          // ★ AUTO-UPGRADE: Try to resolve the template's ComponentNode locally.
-          // If found and different from OLD → switch to SWAP mode.
-          // SWAP mode lets Figma automatically preserve nested component overrides
-          // (including library components we can't resolve manually).
-          var tplResolved = resolveComponentFromInstance(templateInstance);
-          if (tplResolved.comp && tplResolved.comp.key !== oldComponentKey) {
-            console.log("[SG] ★ Auto-upgrade CLONE→SWAP: '" + tplResolved.comp.name + "' key=" + tplResolved.comp.key);
-            newComp = tplResolved.comp;
+          // ★ AUTO-UPGRADE: Try to resolve the template's ComponentNode.
+          // Uses fast async resolution (mainComponent + getMainComponentAsync).
+          // NEVER falls back to expensive page-scan fingerprint search.
+          var tplResolvedComp = await resolveComponentFromInstanceFast(templateInstance);
+          if (tplResolvedComp && tplResolvedComp.key !== oldComponentKey) {
+            console.log("[SG] ★ Auto-upgrade CLONE→SWAP: '" + tplResolvedComp.name + "' key=" + tplResolvedComp.key);
+            newComp = tplResolvedComp;
             useCloneMode = false;
             templateInstance = null;
-          } else if (tplResolved.comp) {
+          } else if (tplResolvedComp) {
             console.log("[SG] ⚠ Template resolves to same key as OLD — keeping CLONE mode");
           } else {
             console.log("[SG] Template component not found locally — keeping CLONE mode");
@@ -1043,15 +1141,50 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
         newStrictFP = buildStrictFingerprint(templateInstance, 2);
       }
 
+      // ★ Anti-freeze: Compute old component's direct children count for cheap pre-filter
+      var _oldChildCount = -1;
+      if (oldComp && "children" in oldComp) {
+        _oldChildCount = (oldComp as any).children.length;
+      } else if (oldStrictFP && oldStrictFP.length > 0) {
+        // Count top-level '|' separators (not inside {}) to estimate direct children count
+        var _braceDepth = 0;
+        var _topCount = 1; // at least 1 child if FP is non-empty
+        for (var _si = 0; _si < oldStrictFP.length; _si++) {
+          var _ch = oldStrictFP.charAt(_si);
+          if (_ch === "{") _braceDepth++;
+          else if (_ch === "}") _braceDepth--;
+          else if (_ch === "|" && _braceDepth === 0) _topCount++;
+        }
+        _oldChildCount = _topCount;
+      }
+      if (_oldChildCount >= 0) {
+        console.log("[SG] ★ Pre-filter: oldChildCount = " + _oldChildCount);
+      }
+
       for (var p = 0; p < pagesToSearch.length; p++) {
         var page = pagesToSearch[p];
         var found = page.findAllWithCriteria({ types: ["INSTANCE"] });
+        console.log("[SG] Page '" + page.name + "': " + found.length + " instances to scan");
+        // ★ Anti-freeze: yield right after findAllWithCriteria (heavy sync Figma API call)
+        await yieldToUI();
+
         for (var f = 0; f < found.length; f++) {
+          // ★ Anti-freeze: yield every 50 instances to keep Figma responsive
+          if (f > 0 && f % 50 === 0) {
+            await yieldToUI();
+          }
+
           var testInst = found[f];
           var isMatch = false;
 
           // Don't include the template instance
           if (templateInstance && testInst.id === templateInstance.id) continue;
+
+          // ★ Anti-freeze: Cheap pre-filter by direct children count
+          // Skips instances that can't possibly match without computing expensive fingerprints
+          if (_oldChildCount >= 0 && "children" in testInst) {
+            if ((testInst as any).children.length !== _oldChildCount) continue;
+          }
 
           // Strategy 1: sync mainComponent.key (try/catch for Web)
           if (!useFingerprintMatch && oldComponentKey) {
@@ -1126,6 +1259,9 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
       var pageStats: Record<string, number> = {};
 
       for (var i = 0; i < instances.length; i++) {
+        // ★ Anti-freeze: yield between instances so Figma can process rendering + UI
+        if (i > 0) await yieldToUI();
+
         var instance = instances[i].node;
         var pageName = instances[i].pageName;
         var label = "#" + i;
@@ -1355,6 +1491,8 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
       }
 
       console.log("[SG] === FIN: " + converted + "/" + totalInstances + " converties ===");
+      // ★ Clean up module-level index to free memory
+      _compByKeyGlobal = {};
       var pages: { name: string; count: number }[] = [];
       for (var pName in pageStats) {
         if (pageStats.hasOwnProperty(pName)) pages.push({ name: pName, count: pageStats[pName] });
@@ -1363,6 +1501,7 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
         result: { totalInstances: totalInstances, converted: converted, errors: failedInstances.length, pages: pages, failedInstances: failedInstances } });
 
     } catch (err: any) {
+      _compByKeyGlobal = {};
       console.log("[SG] ❌ ERREUR GLOBALE:", err);
       figma.ui.postMessage({ type: "conversion-error",
         error: err && err.message ? err.message : "Erreur inattendue lors de la conversion." });
