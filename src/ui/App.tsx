@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, Component as ReactComponent, type ReactNode, type ErrorInfo } from "react";
 import { Repeat, Globe } from "lucide-react";
 import { I18nProvider, useI18n } from "./components/i18n";
 import { StepIndicator } from "./components/step-indicator";
@@ -16,6 +16,56 @@ import type {
 } from "./components/types";
 
 // ════════════════════════════════════════════════════════════
+//  ErrorBoundary — Catches render errors for step 2b/3
+// ════════════════════════════════════════════════════════════
+
+interface ErrorBoundaryProps {
+  children: ReactNode;
+  fallback?: ReactNode;
+  onError?: (error: Error, info: ErrorInfo) => void;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class ErrorBoundary extends ReactComponent<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("[SG] ErrorBoundary caught:", error.message, "\nStack:", error.stack, "\nComponent stack:", info.componentStack);
+    this.props.onError?.(error, info);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback ?? (
+        <div className="p-4">
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <p className="text-sm text-red-700 mb-2">Render Error</p>
+            <pre className="text-[10px] text-red-600 whitespace-pre-wrap break-all">
+              {this.state.error?.message}
+            </pre>
+            <pre className="text-[9px] text-red-400 mt-2 whitespace-pre-wrap break-all max-h-32 overflow-auto">
+              {this.state.error?.stack}
+            </pre>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ════════════════════════════════════════════════════════════
 //  Auto-detection logic (builds initial PropertyRules from
 //  backend data + user's layer mappings)
 // ════════════════════════════════════════════════════════════
@@ -26,6 +76,14 @@ function buildAutoDetectedRules(
   mappings: MappingEntry[],
   oldLayers: LayerItem[]
 ): PropertyRules {
+  console.log("[SG] buildAutoDetectedRules:", { newProps: newProps?.length, oldProps: oldProps?.length, mappings: mappings?.length });
+
+  // Defensive: handle undefined/null inputs
+  if (!newProps || !Array.isArray(newProps)) return { carryOvers: [], booleans: [], variants: [] };
+  if (!oldProps || !Array.isArray(oldProps)) oldProps = [];
+  if (!mappings || !Array.isArray(mappings)) mappings = [];
+  if (!oldLayers || !Array.isArray(oldLayers)) oldLayers = [];
+
   const flatOld = flattenLayers(oldLayers);
 
   // Index old properties by displayName (lowercase) for matching
@@ -117,7 +175,6 @@ function buildAutoDetectedRules(
         mode: matchedLayer ? "per-instance" : "fixed",
         sourceLayerId: matchedLayer?.id ?? null,
         sourceLayerName: matchedLayer?.name ?? null,
-        // Point 4: no match → OFF by default
         fixedValue: matchedLayer ? true : false,
         autoDetected: matchedLayer !== null,
       });
@@ -139,6 +196,7 @@ function buildAutoDetectedRules(
     }
   }
 
+  console.log("[SG] Rules built:", { carryOvers: carryOvers.length, booleans: booleans.length, variants: variants.length });
   return { carryOvers, booleans, variants };
 }
 
@@ -186,11 +244,10 @@ function AppContent() {
   const [conversionResult, setConversionResult] = useState<ConversionResult | null>(null);
   const [conversionError, setConversionError] = useState<string | null>(null);
 
-  // We keep a ref to mappings & selectedComponent for the message handler
-  // to avoid stale closure issues. Using a functional approach instead.
   usePluginMessage(
     useCallback(
       (msg) => {
+        console.log("[SG][UI] Received message:", msg.type);
         switch (msg.type) {
           case "selection-result":
             setIsSelecting(false);
@@ -216,25 +273,30 @@ function AppContent() {
             break;
 
           case "component-properties-result":
+            console.log("[SG][UI] Properties received:", {
+              newProps: msg.newProperties?.length,
+              oldProps: msg.oldProperties?.length,
+            });
             setIsLoadingProperties(false);
-            // Build rules using latest state via functional updates
-            // We use a trick: store the received data and compute in a useEffect-like way
-            // Instead, we compute immediately using the closure values we DO have
-            // This handler is stable (useCallback([], [])), so we use setState updaters
             setSelectedComponent((currentComp) => {
               setMappings((currentMappings) => {
                 if (currentComp) {
-                  const rules = buildAutoDetectedRules(
-                    msg.newProperties,
-                    msg.oldProperties,
-                    currentMappings,
-                    currentComp.layers
-                  );
-                  setPropertyRules(rules);
+                  try {
+                    const rules = buildAutoDetectedRules(
+                      msg.newProperties,
+                      msg.oldProperties,
+                      currentMappings,
+                      currentComp.layers
+                    );
+                    setPropertyRules(rules);
+                  } catch (err) {
+                    console.error("[SG] buildAutoDetectedRules crashed:", err);
+                    // Don't crash — keep empty rules
+                  }
                 }
-                return currentMappings; // don't change mappings
+                return currentMappings;
               });
-              return currentComp; // don't change selectedComponent
+              return currentComp;
             });
             break;
 
@@ -254,7 +316,7 @@ function AppContent() {
             break;
         }
       },
-      [] // stable handler — uses setState updaters to read latest values
+      []
     )
   );
 
@@ -294,6 +356,7 @@ function AppContent() {
 
   // Step 2 → Step 2b: request properties from backend
   const handleGoToStep2b = useCallback(() => {
+    console.log("[SG][UI] Navigating to Step 2b");
     if (selectedComponent && newComponent) {
       setIsLoadingProperties(true);
       postToPlugin({
@@ -302,17 +365,18 @@ function AppContent() {
         newComponentId: newComponent.id,
       });
     }
-    setCurrentStep(3); // internal step 3 = UI step "Properties"
+    setCurrentStep(3);
   }, [selectedComponent, newComponent]);
 
   // Step 2b → Step 3 (conversion)
   const handleGoToStep3 = useCallback(() => {
+    console.log("[SG][UI] Navigating to Step 3 (conversion)");
     setConversionState("idle");
     setProgress(0);
     setProgressInfo({ current: 0, total: 0 });
     setConversionResult(null);
     setConversionError(null);
-    setCurrentStep(4); // internal step 4 = UI step "Conversion"
+    setCurrentStep(4);
   }, []);
 
   const handleRunConversion = useCallback(
@@ -444,33 +508,37 @@ function AppContent() {
           />
         )}
         {currentStep === 3 && (
-          <Step2bProperties
-            stepTitle={steps[2].label}
-            oldLayers={selectedComponent?.layers ?? []}
-            propertyRules={propertyRules}
-            onPropertyRulesChange={setPropertyRules}
-            isLoading={isLoadingProperties}
-            onNext={handleGoToStep3}
-            onBack={() => setCurrentStep(2)}
-          />
+          <ErrorBoundary>
+            <Step2bProperties
+              stepTitle={steps[2].label}
+              oldLayers={selectedComponent?.layers ?? []}
+              propertyRules={propertyRules}
+              onPropertyRulesChange={setPropertyRules}
+              isLoading={isLoadingProperties}
+              onNext={handleGoToStep3}
+              onBack={() => setCurrentStep(2)}
+            />
+          </ErrorBoundary>
         )}
         {currentStep === 4 && selectedComponent && newComponent && (
-          <Step3Conversion
-            stepTitle={steps[3].label}
-            oldComponent={selectedComponent}
-            newComponent={newComponent}
-            mappings={mappings}
-            propertyRules={propertyRules}
-            conversionState={conversionState}
-            progress={progress}
-            progressInfo={progressInfo}
-            result={conversionResult}
-            conversionError={conversionError}
-            onRunConversion={handleRunConversion}
-            onFocusNode={handleFocusNode}
-            onBack={() => setCurrentStep(3)}
-            onReset={handleReset}
-          />
+          <ErrorBoundary>
+            <Step3Conversion
+              stepTitle={steps[3].label}
+              oldComponent={selectedComponent}
+              newComponent={newComponent}
+              mappings={mappings}
+              propertyRules={propertyRules}
+              conversionState={conversionState}
+              progress={progress}
+              progressInfo={progressInfo}
+              result={conversionResult}
+              conversionError={conversionError}
+              onRunConversion={handleRunConversion}
+              onFocusNode={handleFocusNode}
+              onBack={() => setCurrentStep(3)}
+              onReset={handleReset}
+            />
+          </ErrorBoundary>
         )}
       </div>
     </div>

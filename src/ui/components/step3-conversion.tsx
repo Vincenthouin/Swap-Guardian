@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import {
   ChevronLeft, Play, FileText, FolderOpen, Check, AlertCircle,
   ArrowRight, RefreshCw, Sparkles, Component, Crosshair,
-  ChevronDown, ChevronUp, Palette, ToggleLeft, Layers,
+  ChevronDown, ChevronUp, Palette, ToggleLeft, Layers, Repeat,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -49,7 +49,11 @@ export function Step3Conversion({
     [onFocusNode]
   );
 
-  const hasPropertyRules = propertyRules.booleans.length > 0 || propertyRules.variants.length > 0;
+  // Defensive: ensure propertyRules sub-arrays exist
+  const carryOvers = propertyRules?.carryOvers ?? [];
+  const booleans = propertyRules?.booleans ?? [];
+  const variants = propertyRules?.variants ?? [];
+  const hasPropertyRules = carryOvers.length > 0 || booleans.length > 0 || variants.length > 0;
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -112,42 +116,65 @@ export function Step3Conversion({
                     </div>
                   ))}
 
-                  {/* Property Rules Summary */}
-                  {hasPropertyRules && propertyRules.booleans.length > 0 && (
-                    <div className="px-3 py-2 bg-blue-50/50">
+                  {/* ═══ Property Rules Summary ═══ */}
+
+                  {/* Carry-overs */}
+                  {carryOvers.length > 0 && (
+                    <div className="px-3 py-2 bg-emerald-50/50">
                       <div className="flex items-center gap-1.5 mb-1">
-                        <ToggleLeft className="w-3 h-3 text-blue-500" />
-                        <span className="text-[10px] text-blue-700">{t("togglesSummary")}</span>
+                        <Repeat className="w-3 h-3 text-emerald-500" />
+                        <span className="text-[10px] text-emerald-700">{t("carryOverSummary")} ({carryOvers.length})</span>
                       </div>
-                      {propertyRules.booleans.map((b) => (
-                        <div key={b.propertyName} className="flex items-center gap-1.5 ml-[18px] py-0.5">
-                          <span className="text-[10px] text-neutral-900">{b.displayName}</span>
+                      {carryOvers.map((c) => (
+                        <div key={c.newPropertyName} className="flex items-center gap-1.5 ml-[18px] py-0.5">
+                          <span className="text-[10px] text-neutral-900">{c.displayName}</span>
                           <span className="text-[10px] text-neutral-500">
-                            {b.sourceLayerName
-                              ? `\u2190 ${t("visibilityOf", { name: b.sourceLayerName })}`
-                              : t("defaultValueLabel", { value: b.defaultValue ? "ON" : "OFF" })}
+                            {c.mode === "carry-over"
+                              ? t("carryOverFrom", { name: c.oldPropertyName })
+                              : t("fixedAt", { value: String(c.fixedValue ?? "") })}
                           </span>
                         </div>
                       ))}
                     </div>
                   )}
-                  {hasPropertyRules && propertyRules.variants.length > 0 && (
+
+                  {/* Boolean toggles */}
+                  {booleans.length > 0 && (
+                    <div className="px-3 py-2 bg-blue-50/50">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <ToggleLeft className="w-3 h-3 text-blue-500" />
+                        <span className="text-[10px] text-blue-700">{t("togglesSummary")} ({booleans.length})</span>
+                      </div>
+                      {booleans.map((b) => (
+                        <div key={b.propertyName} className="flex items-center gap-1.5 ml-[18px] py-0.5">
+                          <span className="text-[10px] text-neutral-900">{b.displayName}</span>
+                          <span className="text-[10px] text-neutral-500">
+                            {b.mode === "per-instance" && b.sourceLayerName
+                              ? `\u2190 ${t("visibilityOf", { name: b.sourceLayerName })}`
+                              : t("fixedAt", { value: b.fixedValue ? "ON" : "OFF" })}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Variant rules */}
+                  {variants.length > 0 && (
                     <div className="px-3 py-2 bg-amber-50/50">
                       <div className="flex items-center gap-1.5 mb-1">
                         <Layers className="w-3 h-3 text-amber-500" />
-                        <span className="text-[10px] text-amber-700">{t("variantsSummary")}</span>
+                        <span className="text-[10px] text-amber-700">{t("variantsSummary")} ({variants.length})</span>
                       </div>
-                      {propertyRules.variants.map((v) => {
-                        const def = v.options.find((o) => o.isDefault);
-                        return (
-                          <div key={v.propertyName} className="flex items-center gap-1.5 ml-[18px] py-0.5">
-                            <span className="text-[10px] text-neutral-900">{v.displayName}</span>
-                            <span className="text-[10px] text-neutral-500">
-                              {t("defaultLabel")} : {def?.value || "\u2014"}
-                            </span>
-                          </div>
-                        );
-                      })}
+                      {variants.map((v) => (
+                        <div key={v.propertyName} className="flex items-center gap-1.5 ml-[18px] py-0.5">
+                          <span className="text-[10px] text-neutral-900">{v.displayName}</span>
+                          <span className="text-[10px] text-neutral-500">
+                            {v.mode === "auto-detect"
+                              ? t("autoDetectMode", { value: v.fixedValue ?? "" })
+                              : t("fixedAt", { value: v.fixedValue ?? "" })}
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>

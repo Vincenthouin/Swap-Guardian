@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import {
   ChevronRight,
   ChevronLeft,
@@ -18,7 +18,6 @@ import {
   Unlock,
 } from "lucide-react";
 import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
 import { useI18n } from "./i18n";
 import { flattenLayers } from "./utils";
 import type {
@@ -28,6 +27,18 @@ import type {
   BooleanRule,
   VariantRule,
 } from "./types";
+
+// ── Inline Badge replacement (no external dependency) ──
+function AutoBadge({ children, color = "violet" }: { children: React.ReactNode; color?: "violet" | "emerald" }) {
+  const colors = color === "emerald"
+    ? "bg-emerald-100 text-emerald-700 border-emerald-200"
+    : "bg-violet-50 text-violet-600 border-violet-200";
+  return (
+    <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border ${colors}`}>
+      {children}
+    </span>
+  );
+}
 
 // ════════════════════════════════════════════════════════════
 
@@ -51,57 +62,72 @@ export function Step2bProperties({
   onBack,
 }: Step2bProps) {
   const { t } = useI18n();
-  const flatOldLayers = useMemo(() => flattenLayers(oldLayers), [oldLayers]);
+  const flatOldLayers = useMemo(() => flattenLayers(oldLayers || []), [oldLayers]);
 
-  const hasCarryOvers = propertyRules.carryOvers.length > 0;
-  const hasBooleans = propertyRules.booleans.length > 0;
-  const hasVariants = propertyRules.variants.length > 0;
+  // Debug — remove after testing
+  useEffect(() => {
+    console.log("[SG][Step2b] mounted", {
+      isLoading,
+      carryOvers: propertyRules?.carryOvers?.length ?? 0,
+      booleans: propertyRules?.booleans?.length ?? 0,
+      variants: propertyRules?.variants?.length ?? 0,
+    });
+  }, [isLoading, propertyRules]);
+
+  // Defensive: ensure propertyRules has all fields
+  const carryOvers = propertyRules?.carryOvers ?? [];
+  const booleans = propertyRules?.booleans ?? [];
+  const variants = propertyRules?.variants ?? [];
+
+  const hasCarryOvers = carryOvers.length > 0;
+  const hasBooleans = booleans.length > 0;
+  const hasVariants = variants.length > 0;
   const hasAnyRules = hasCarryOvers || hasBooleans || hasVariants;
 
   // ── Carry-over handlers ──
 
   const handleCarryOverModeChange = useCallback(
     (newPropName: string, mode: "carry-over" | "fixed") => {
-      const updated = propertyRules.carryOvers.map((c) =>
+      const updated = carryOvers.map((c) =>
         c.newPropertyName === newPropName ? { ...c, mode } : c
       );
       onPropertyRulesChange({ ...propertyRules, carryOvers: updated });
     },
-    [propertyRules, onPropertyRulesChange]
+    [propertyRules, carryOvers, onPropertyRulesChange]
   );
 
   const handleCarryOverFixedValue = useCallback(
     (newPropName: string, fixedValue: string | boolean) => {
-      const updated = propertyRules.carryOvers.map((c) =>
+      const updated = carryOvers.map((c) =>
         c.newPropertyName === newPropName ? { ...c, fixedValue } : c
       );
       onPropertyRulesChange({ ...propertyRules, carryOvers: updated });
     },
-    [propertyRules, onPropertyRulesChange]
+    [propertyRules, carryOvers, onPropertyRulesChange]
   );
 
   const handleCarryOverValueMapping = useCallback(
     (newPropName: string, oldValue: string, newValue: string) => {
-      const updated = propertyRules.carryOvers.map((c) =>
+      const updated = carryOvers.map((c) =>
         c.newPropertyName === newPropName
           ? { ...c, valueMapping: { ...c.valueMapping, [oldValue]: newValue } }
           : c
       );
       onPropertyRulesChange({ ...propertyRules, carryOvers: updated });
     },
-    [propertyRules, onPropertyRulesChange]
+    [propertyRules, carryOvers, onPropertyRulesChange]
   );
 
   // ── Boolean handlers ──
 
   const handleBooleanModeChange = useCallback(
     (propName: string, mode: "per-instance" | "fixed") => {
-      const updated = propertyRules.booleans.map((b) =>
+      const updated = booleans.map((b) =>
         b.propertyName === propName ? { ...b, mode } : b
       );
       onPropertyRulesChange({ ...propertyRules, booleans: updated });
     },
-    [propertyRules, onPropertyRulesChange]
+    [propertyRules, booleans, onPropertyRulesChange]
   );
 
   const handleBooleanLayerChange = useCallback(
@@ -109,7 +135,7 @@ export function Step2bProperties({
       const layer = layerId
         ? flatOldLayers.find((l) => l.id === layerId) ?? null
         : null;
-      const updated = propertyRules.booleans.map((b) =>
+      const updated = booleans.map((b) =>
         b.propertyName === propName
           ? {
               ...b,
@@ -122,39 +148,39 @@ export function Step2bProperties({
       );
       onPropertyRulesChange({ ...propertyRules, booleans: updated });
     },
-    [propertyRules, flatOldLayers, onPropertyRulesChange]
+    [propertyRules, booleans, flatOldLayers, onPropertyRulesChange]
   );
 
   const handleBooleanFixedChange = useCallback(
     (propName: string, value: boolean) => {
-      const updated = propertyRules.booleans.map((b) =>
+      const updated = booleans.map((b) =>
         b.propertyName === propName ? { ...b, fixedValue: value } : b
       );
       onPropertyRulesChange({ ...propertyRules, booleans: updated });
     },
-    [propertyRules, onPropertyRulesChange]
+    [propertyRules, booleans, onPropertyRulesChange]
   );
 
   // ── Variant handlers ──
 
   const handleVariantModeChange = useCallback(
     (propName: string, mode: "auto-detect" | "fixed") => {
-      const updated = propertyRules.variants.map((v) =>
+      const updated = variants.map((v) =>
         v.propertyName === propName ? { ...v, mode } : v
       );
       onPropertyRulesChange({ ...propertyRules, variants: updated });
     },
-    [propertyRules, onPropertyRulesChange]
+    [propertyRules, variants, onPropertyRulesChange]
   );
 
   const handleVariantFixedChange = useCallback(
     (propName: string, value: string) => {
-      const updated = propertyRules.variants.map((v) =>
+      const updated = variants.map((v) =>
         v.propertyName === propName ? { ...v, fixedValue: value } : v
       );
       onPropertyRulesChange({ ...propertyRules, variants: updated });
     },
-    [propertyRules, onPropertyRulesChange]
+    [propertyRules, variants, onPropertyRulesChange]
   );
 
   return (
@@ -206,12 +232,12 @@ export function Step2bProperties({
               <div className="flex items-center gap-2 mb-3">
                 <Repeat className="w-4 h-4 text-emerald-500" />
                 <label className="text-xs text-neutral-500">
-                  {t("carryOverSection")} ({propertyRules.carryOvers.length})
+                  {t("carryOverSection")} ({carryOvers.length})
                 </label>
               </div>
 
               <div className="flex flex-col gap-2">
-                {propertyRules.carryOvers.map((rule) => (
+                {carryOvers.map((rule) => (
                   <CarryOverCard
                     key={rule.newPropertyName}
                     rule={rule}
@@ -240,12 +266,12 @@ export function Step2bProperties({
               <div className="flex items-center gap-2 mb-3">
                 <ToggleLeft className="w-4 h-4 text-blue-500" />
                 <label className="text-xs text-neutral-500">
-                  {t("togglesSection")} ({propertyRules.booleans.length})
+                  {t("togglesSection")} ({booleans.length})
                 </label>
               </div>
 
               <div className="flex flex-col gap-2">
-                {propertyRules.booleans.map((rule) => (
+                {booleans.map((rule) => (
                   <BooleanRuleCard
                     key={rule.propertyName}
                     rule={rule}
@@ -271,12 +297,12 @@ export function Step2bProperties({
               <div className="flex items-center gap-2 mb-3">
                 <Layers className="w-4 h-4 text-amber-500" />
                 <label className="text-xs text-neutral-500">
-                  {t("variantsSection")} ({propertyRules.variants.length})
+                  {t("variantsSection")} ({variants.length})
                 </label>
               </div>
 
               <div className="flex flex-col gap-2">
-                {propertyRules.variants.map((rule) => (
+                {variants.map((rule) => (
                   <VariantRuleCard
                     key={rule.propertyName}
                     rule={rule}
@@ -327,9 +353,10 @@ function CarryOverCard({
   const isCarryOver = rule.mode === "carry-over";
 
   // For variants: check if any value mapping differs from identity
+  const valueMapping = rule.valueMapping ?? {};
   const hasRemappedValues =
     rule.type === "VARIANT" &&
-    Object.entries(rule.valueMapping).some(([k, v]) => k !== v);
+    Object.entries(valueMapping).some(([k, v]) => k !== v);
 
   return (
     <div className="rounded-lg border border-emerald-200 bg-emerald-50/30 overflow-hidden">
@@ -351,12 +378,9 @@ function CarryOverCard({
 
           <div className="flex items-center gap-1.5">
             {rule.autoMatched && (
-              <Badge
-                variant="secondary"
-                className="text-[10px] bg-emerald-100 text-emerald-700 border-emerald-200"
-              >
+              <AutoBadge color="emerald">
                 {t("autoDetected")}
-              </Badge>
+              </AutoBadge>
             )}
             {/* Toggle carry-over vs fixed */}
             <button
@@ -386,8 +410,8 @@ function CarryOverCard({
             <div className="text-[10px] text-emerald-700">
               <p>
                 {t("carryOverExplanation", {
-                  old: rule.oldPropertyName,
-                  new: rule.displayName,
+                  old: rule.oldPropertyName ?? "?",
+                  "new": rule.displayName ?? "?",
                 })}
               </p>
               {hasRemappedValues && (
@@ -408,9 +432,9 @@ function CarryOverCard({
         {isCarryOver &&
           showMapping &&
           rule.type === "VARIANT" &&
-          Object.keys(rule.valueMapping).length > 0 && (
+          Object.keys(valueMapping).length > 0 && (
             <div className="mt-2 flex flex-col gap-1">
-              {Object.entries(rule.valueMapping).map(([oldVal, newVal]) => {
+              {Object.entries(valueMapping).map(([oldVal, newVal]) => {
                 const isSame = oldVal === newVal;
                 return (
                   <div
@@ -469,7 +493,7 @@ function CarryOverCard({
                 onChange={(e) => onFixedValueChange(e.target.value)}
                 className="w-full text-xs px-2 py-1.5 rounded-md border border-neutral-200 bg-white"
               >
-                {Object.values(rule.valueMapping)
+                {Object.values(valueMapping)
                   .filter((v, i, a) => a.indexOf(v) === i)
                   .map((val) => (
                     <option key={val} value={val}>
@@ -520,13 +544,10 @@ function BooleanRuleCard({
           </div>
           <div className="flex items-center gap-1.5">
             {rule.autoDetected && (
-              <Badge
-                variant="secondary"
-                className="text-[10px] bg-violet-50 text-violet-600 border-violet-200"
-              >
+              <AutoBadge>
                 <Sparkles className="w-3 h-3" />
                 {t("autoDetected")}
-              </Badge>
+              </AutoBadge>
             )}
           </div>
         </div>
@@ -590,7 +611,7 @@ function BooleanRuleCard({
             {showLayerPicker && (
               <div className="absolute z-10 left-0 right-0 mt-1 border border-neutral-200 rounded-lg bg-white shadow-lg overflow-hidden">
                 <div className="max-h-40 overflow-y-auto">
-                  {oldLayers.map((layer) => (
+                  {(oldLayers || []).map((layer) => (
                     <button
                       key={layer.id}
                       onClick={() => {
@@ -697,7 +718,8 @@ function VariantRuleCard({
   const { t } = useI18n();
   const isAutoDetect = rule.mode === "auto-detect";
   const hasSignatures =
-    rule.signatures && Object.keys(rule.signatures).length > 0;
+    rule.signatures != null && Object.keys(rule.signatures).length > 0;
+  const options = rule.options ?? [];
 
   return (
     <div className="rounded-lg border border-neutral-200 bg-white overflow-hidden">
@@ -712,18 +734,15 @@ function VariantRuleCard({
                 {rule.displayName}
               </span>
               <span className="text-[10px] text-neutral-400 ml-1.5">
-                {rule.options.length} {t("options")}
+                {options.length} {t("options")}
               </span>
             </div>
           </div>
           {rule.autoDetected && (
-            <Badge
-              variant="secondary"
-              className="text-[10px] bg-violet-50 text-violet-600 border-violet-200"
-            >
+            <AutoBadge>
               <Sparkles className="w-3 h-3" />
               {t("autoDetected")}
-            </Badge>
+            </AutoBadge>
           )}
         </div>
 
@@ -759,7 +778,7 @@ function VariantRuleCard({
             <div className="text-[10px] text-amber-700">
               <p>{t("autoDetectExplanation")}</p>
               <p className="mt-1 text-amber-600">
-                {t("autoDetectFallback", { value: rule.fixedValue })}
+                {t("autoDetectFallback", { value: rule.fixedValue ?? "" })}
               </p>
             </div>
           </div>
@@ -772,11 +791,11 @@ function VariantRuleCard({
               {t("fallbackValue")}
             </label>
             <select
-              value={rule.fixedValue}
+              value={rule.fixedValue ?? ""}
               onChange={(e) => onFixedChange(e.target.value)}
               className="w-full text-xs px-2 py-1.5 rounded-md border border-neutral-200 bg-white"
             >
-              {rule.options.map((opt) => (
+              {options.map((opt) => (
                 <option key={opt} value={opt}>
                   {opt}
                 </option>
@@ -802,7 +821,7 @@ function VariantRuleCard({
               {t("fixedValueLabel")}
             </label>
             <div className="flex flex-wrap gap-1.5">
-              {rule.options.map((opt) => (
+              {options.map((opt) => (
                 <button
                   key={opt}
                   onClick={() => onFixedChange(opt)}

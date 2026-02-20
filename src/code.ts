@@ -1,4 +1,4 @@
-console.log("[SG] ★ Plugin sandbox loaded (v12)");
+console.log("[SG] ★ Plugin sandbox loaded (v13)");
 
 figma.showUI(__html__, { width: 400, height: 600 });
 
@@ -741,8 +741,6 @@ async function resolveNestedComponentInfo(nestedInst: InstanceNode): Promise<{
   }
 
   // ★ Strategy 1: getMainComponentAsync — the CORRECT API for dynamic-page mode
-  // Figma explicitly says: "Cannot call mainComponent with documentAccess: dynamic-page.
-  // Use node.getMainComponentAsync instead."
   var mcRef = await safeGetMainComponentAsync(nestedInst);
   if (mcRef) {
     var mcKey: string | null = null;
@@ -775,7 +773,6 @@ function collectFontsFromTree(node: SceneNode, fonts: Record<string, FontName>):
       var fk = (fn as FontName).family + "::" + (fn as FontName).style;
       if (!fonts[fk]) fonts[fk] = fn as FontName;
     }
-    // For mixed fonts, we skip pre-loading (rare case, handled at write time)
   }
   if ("children" in node) {
     var kids = (node as any).children as SceneNode[];
@@ -855,7 +852,7 @@ function replaceWithClone(
 }
 
 
-// --- Property inference helpers ---
+// ─── Property inference helpers ─────────────────────────
 
 // Walk a component's children to find which layer has its "visible" property
 // linked to a given component property name via componentPropertyReferences.
@@ -879,6 +876,222 @@ function findBooleanControlledLayer(comp: ComponentNode | InstanceNode, property
   return walk(comp);
 }
 
+// ★ v13: Build a variant signature (visible layer names + types + count)
+// Used for Jaccard-based auto-detect matching.
+function buildVariantSignature(comp: ComponentNode): {
+  visibleLayerNames: string[];
+  visibleLayerTypes: string[];
+  childCount: number;
+} {
+  var names: string[] = [];
+  var types: string[] = [];
+  function walk(node: SceneNode) {
+    if (node.visible) {
+      names.push(node.name);
+      types.push(node.type);
+    }
+    if ("children" in node) {
+      var kids = (node as any).children as SceneNode[];
+      for (var i = 0; i < kids.length; i++) {
+        walk(kids[i]);
+      }
+    }
+  }
+  if ("children" in comp) {
+    var kids = (comp as any).children as SceneNode[];
+    for (var ci = 0; ci < kids.length; ci++) {
+      walk(kids[ci]);
+    }
+  }
+  return { visibleLayerNames: names, visibleLayerTypes: types, childCount: names.length };
+}
+
+// ★ v13: Compute Jaccard similarity between two sets of visible layer names.
+// Returns a score between 0 and 1.
+function jaccardSimilarity(setA: string[], setB: string[]): number {
+  var mapA: Record<string, boolean> = {};
+  for (var i = 0; i < setA.length; i++) mapA[setA[i]] = true;
+  var mapB: Record<string, boolean> = {};
+  for (var j = 0; j < setB.length; j++) mapB[setB[j]] = true;
+
+  var intersection = 0;
+  var union = 0;
+  var allKeys: Record<string, boolean> = {};
+  for (var k in mapA) allKeys[k] = true;
+  for (var k2 in mapB) allKeys[k2] = true;
+
+  for (var key in allKeys) {
+    union++;
+    if (mapA[key] && mapB[key]) intersection++;
+  }
+
+  return union === 0 ? 0 : intersection / union;
+}
+
+// ★ v13: Match an old instance to the best variant using Jaccard signatures.
+// Returns the best matching variant value, or null if no match above threshold.
+function matchBestVariant(
+  instanceNode: SceneNode,
+  signatures: Record<string, { visibleLayerNames: string[]; visibleLayerTypes: string[]; childCount: number }>,
+  threshold: number
+): string | null {
+  // Build signature of the old instance
+  var instNames: string[] = [];
+  function walkInst(node: SceneNode) {
+    if (node.visible) {
+      instNames.push(node.name);
+    }
+    if ("children" in node) {
+      var kids = (node as any).children as SceneNode[];
+      for (var i = 0; i < kids.length; i++) {
+        walkInst(kids[i]);
+      }
+    }
+  }
+  if ("children" in instanceNode) {
+    var kids = (instanceNode as any).children as SceneNode[];
+    for (var ci = 0; ci < kids.length; ci++) {
+      walkInst(kids[ci]);
+    }
+  }
+
+  var bestVariant: string | null = null;
+  var bestScore = 0;
+
+  for (var variantValue in signatures) {
+    if (!signatures.hasOwnProperty(variantValue)) continue;
+    var sig = signatures[variantValue];
+    var score = jaccardSimilarity(instNames, sig.visibleLayerNames);
+    if (score > bestScore && score >= threshold) {
+      bestScore = score;
+      bestVariant = variantValue;
+    }
+  }
+
+  if (bestVariant) {
+    console.log("[SG]     Jaccard match: '" + bestVariant + "' (score=" + bestScore.toFixed(3) + ")");
+  }
+  return bestVariant;
+}
+
+// ★ v13: Read property definitions from a component/componentSet
+// Returns { newProperties, oldProperties } in the format the UI expects.
+function readPropertyDefs(
+  node: ComponentNode | ComponentSetNode | InstanceNode | null,
+  compTarget: ComponentNode | null
+): {
+  name: string; displayName: string; type: string;
+  defaultValue: string | boolean; controlledLayerName?: string;
+  variantOptions?: string[];
+  variantSignatures?: Record<string, { visibleLayerNames: string[]; visibleLayerTypes: string[]; childCount: number }>;
+}[] {
+  if (!node) return [];
+
+  // Get the correct source of property definitions
+  var defSource: ComponentSetNode | ComponentNode | null = null;
+  if (node.type === "COMPONENT_SET") {
+    defSource = node as ComponentSetNode;
+  } else if (node.type === "COMPONENT") {
+    var asComp = node as ComponentNode;
+    if (asComp.parent && asComp.parent.type === "COMPONENT_SET") {
+      defSource = asComp.parent as ComponentSetNode;
+    } else {
+      defSource = asComp;
+    }
+  } else if (node.type === "INSTANCE") {
+    // For instances, use compTarget if available
+    if (compTarget) {
+      if (compTarget.parent && compTarget.parent.type === "COMPONENT_SET") {
+        defSource = compTarget.parent as ComponentSetNode;
+      } else {
+        defSource = compTarget;
+      }
+    }
+  }
+
+  if (!defSource) return [];
+
+  var rawDefs = defSource.componentPropertyDefinitions;
+  var propertyDefs: any[] = [];
+
+  // If the source is a ComponentSet, also build variant signatures for each child
+  var compSet: ComponentSetNode | null = null;
+  if (defSource.type === "COMPONENT_SET") {
+    compSet = defSource as ComponentSetNode;
+  }
+
+  for (var pName in rawDefs) {
+    if (!rawDefs.hasOwnProperty(pName)) continue;
+    var pDef = rawDefs[pName];
+
+    // Clean up display name (remove Figma's #nodeId suffix)
+    var dispName = pName;
+    var hashIdx = pName.indexOf("#");
+    if (hashIdx > 0) dispName = pName.substring(0, hashIdx);
+
+    if (pDef.type === "BOOLEAN") {
+      var controlledLayer: string | null = null;
+      if (compTarget) {
+        controlledLayer = findBooleanControlledLayer(compTarget, pName);
+      }
+      propertyDefs.push({
+        name: pName,
+        displayName: dispName,
+        type: "BOOLEAN",
+        defaultValue: pDef.defaultValue as boolean,
+        controlledLayerName: controlledLayer || undefined,
+      });
+    }
+    else if (pDef.type === "VARIANT") {
+      var variantOpts: string[] = [];
+      if (pDef.variantOptions) {
+        variantOpts = pDef.variantOptions as string[];
+      }
+
+      // Build variant signatures from the ComponentSet's children
+      var variantSigs: Record<string, { visibleLayerNames: string[]; visibleLayerTypes: string[]; childCount: number }> | undefined;
+      if (compSet && variantOpts.length > 0) {
+        variantSigs = {};
+        for (var vi = 0; vi < compSet.children.length; vi++) {
+          var variantChild = compSet.children[vi];
+          if (variantChild.type !== "COMPONENT") continue;
+          // Extract this variant's value for this property from the component's name
+          // Figma convention: "Property1=Value1, Property2=Value2"
+          var variantComp = variantChild as ComponentNode;
+          var variantName = variantComp.name;
+          var variantParts = variantName.split(",");
+          for (var vpi = 0; vpi < variantParts.length; vpi++) {
+            var kv = variantParts[vpi].trim().split("=");
+            if (kv.length === 2 && kv[0].trim() === dispName) {
+              var variantValue = kv[1].trim();
+              if (variantOpts.indexOf(variantValue) >= 0) {
+                variantSigs[variantValue] = buildVariantSignature(variantComp);
+              }
+              break;
+            }
+          }
+        }
+        // Only include signatures if we found at least 2 (otherwise useless for matching)
+        if (Object.keys(variantSigs).length < 2) {
+          variantSigs = undefined;
+        }
+      }
+
+      propertyDefs.push({
+        name: pName,
+        displayName: dispName,
+        type: "VARIANT",
+        defaultValue: pDef.defaultValue as string,
+        variantOptions: variantOpts,
+        variantSignatures: variantSigs,
+      });
+    }
+  }
+
+  return propertyDefs;
+}
+
+
 // ─── Message handler ────────────────────────────────────
 
 figma.ui.onmessage = async function (msg: Record<string, any>) {
@@ -886,8 +1099,6 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
   // ── Sélection du composant source ──
   if (msg.type === "get-selection") {
     try {
-      // ★ Anti-freeze: Do NOT load all pages here — only needed at conversion time.
-      // The selected node is already on the current page, so we can read it directly.
       var selection = figma.currentPage.selection;
       console.log("[SG] get-selection: " + selection.length + " node(s)");
 
@@ -913,10 +1124,6 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
         var inst = selectedNode as InstanceNode;
         var layers2 = buildComponentLayers(inst);
 
-        // ★ Anti-freeze: Try sync mainComponent FIRST (instant, no page scan).
-        // Only if that fails (Web+dynamic-page), fall through to fingerprint mode.
-        // This avoids the expensive resolveComponentFromInstance → findComponentByFingerprint
-        // which scans ALL pages × ALL components — deferred to conversion time instead.
         var directKey: string | null = null;
         var directCompName: string | null = null;
         try {
@@ -931,8 +1138,6 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
           figma.ui.postMessage({ type: "selection-result",
             component: { id: inst.id, name: directCompName || inst.name, componentKey: directKey, layers: layers2 } as ComponentInfo });
         } else {
-          // Web+dynamic-page: mainComponent not available → use fingerprint mode
-          // This is fast: just builds the FP string from the current node, no page scanning
           var strictFP = buildStrictFingerprint(inst, 2);
           var relaxedFP = buildRelaxedFingerprint(inst, 2);
           console.log("[SG] StrictFP: " + strictFP.substring(0, 100) + (strictFP.length > 100 ? "..." : ""));
@@ -958,8 +1163,6 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
   // ── Sélection du composant cible ──
   if (msg.type === "get-new-component") {
     try {
-      // ★ Anti-freeze: No page loading needed here.
-      // COMPONENT → direct key, INSTANCE → template mode (uses node ID only).
       var sel = figma.currentPage.selection;
       console.log("[SG] get-new-component: " + sel.length + " node(s)");
 
@@ -984,11 +1187,6 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
         var newInst = newNode as InstanceNode;
         var newLayers2 = buildComponentLayers(newInst);
 
-        // ★ ALWAYS use template mode for instances.
-        // Even if we find a local match, the user selected THIS specific instance
-        // as the replacement template. Using clone mode ensures:
-        // 1. Library instances stay connected to the library
-        // 2. We don't confuse old/new when both resolve to the same local component
         var tplKey = TPL_PREFIX + newInst.id;
         console.log("[SG] ✅ New component (template mode): '" + newInst.name + "' nodeId=" + newInst.id);
         figma.ui.postMessage({ type: "new-component-result",
@@ -1006,114 +1204,100 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
     }
   }
 
-  // -- Analyse des properties du nouveau composant --
+  // ══════════════════════════════════════════════════════════
+  // ★ v13: FIXED — get-component-properties handler
+  //   Reads BOTH old + new component IDs from the UI message.
+  //   Sends back { newProperties, oldProperties } (not just "properties").
+  // ══════════════════════════════════════════════════════════
   if (msg.type === "get-component-properties") {
     try {
-      var propNodeId: string = msg.nodeId;
-      var propNode = await figma.getNodeByIdAsync(propNodeId);
-      if (!propNode) {
-        figma.ui.postMessage({ type: "component-properties-result", properties: [] });
-        return;
-      }
+      var oldCompId: string = msg.oldComponentId;
+      var newCompId: string = msg.newComponentId;
+      console.log("[SG] get-component-properties: old=" + oldCompId + " new=" + newCompId);
 
-      // Resolve the ComponentNode or ComponentSetNode
-      var compTarget: ComponentNode | null = null;
-      var compSetTarget: ComponentSetNode | null = null;
+      // ── Resolve NEW component node ──
+      var newPropNode = await figma.getNodeByIdAsync(newCompId);
+      var newCompTarget: ComponentNode | null = null;
 
-      if (propNode.type === "COMPONENT") {
-        compTarget = propNode as ComponentNode;
-        if (compTarget.parent && compTarget.parent.type === "COMPONENT_SET") {
-          compSetTarget = compTarget.parent as ComponentSetNode;
-        }
-      } else if (propNode.type === "INSTANCE") {
-        var instPropNode = propNode as InstanceNode;
-        try {
-          var mcProp = await safeGetMainComponentAsync(instPropNode);
-          if (mcProp) {
-            compTarget = mcProp;
-            if (mcProp.parent && mcProp.parent.type === "COMPONENT_SET") {
-              compSetTarget = mcProp.parent as ComponentSetNode;
-            }
+      if (newPropNode) {
+        if (newPropNode.type === "COMPONENT") {
+          newCompTarget = newPropNode as ComponentNode;
+        } else if (newPropNode.type === "INSTANCE") {
+          var newInstProp = newPropNode as InstanceNode;
+          try {
+            newCompTarget = await safeGetMainComponentAsync(newInstProp);
+          } catch (_e) { }
+        } else if (newPropNode.type === "COMPONENT_SET") {
+          var newCS = newPropNode as ComponentSetNode;
+          if (newCS.children.length > 0) {
+            newCompTarget = newCS.defaultVariant as ComponentNode;
           }
-        } catch (_e) { }
-      } else if (propNode.type === "COMPONENT_SET") {
-        compSetTarget = propNode as ComponentSetNode;
-        if (compSetTarget.children.length > 0) {
-          compTarget = compSetTarget.defaultVariant as ComponentNode;
         }
       }
 
-      // Read componentPropertyDefinitions from the ComponentSet (if exists) or Component
-      var defSource: (ComponentSetNode | ComponentNode | null) = compSetTarget || compTarget;
-      if (!defSource) {
-        figma.ui.postMessage({ type: "component-properties-result", properties: [] });
-        return;
-      }
+      var newProperties = readPropertyDefs(
+        newCompTarget || newPropNode as any,
+        newCompTarget
+      );
+      console.log("[SG] New component properties: " + newProperties.length);
 
-      var rawDefs = defSource.componentPropertyDefinitions;
-      var propertyDefs: {
-        name: string; displayName: string; type: string;
-        defaultValue: string | boolean; controlledLayerName?: string;
-        variantOptions?: string[];
-      }[] = [];
+      // ── Resolve OLD component node ──
+      var oldPropNode = await figma.getNodeByIdAsync(oldCompId);
+      var oldCompTarget: ComponentNode | null = null;
 
-      for (var pName in rawDefs) {
-        if (!rawDefs.hasOwnProperty(pName)) continue;
-        var pDef = rawDefs[pName];
-
-        // Clean up display name (remove Figma's #nodeId suffix)
-        var dispName = pName;
-        var hashIdx = pName.indexOf("#");
-        if (hashIdx > 0) dispName = pName.substring(0, hashIdx);
-
-        if (pDef.type === "BOOLEAN") {
-          // Find which layer this boolean controls via componentPropertyReferences
-          var controlledLayer: string | null = null;
-          if (compTarget) {
-            controlledLayer = findBooleanControlledLayer(compTarget, pName);
+      if (oldPropNode) {
+        if (oldPropNode.type === "COMPONENT") {
+          oldCompTarget = oldPropNode as ComponentNode;
+        } else if (oldPropNode.type === "INSTANCE") {
+          var oldInstProp = oldPropNode as InstanceNode;
+          try {
+            oldCompTarget = await safeGetMainComponentAsync(oldInstProp);
+          } catch (_e) { }
+        } else if (oldPropNode.type === "COMPONENT_SET") {
+          var oldCS = oldPropNode as ComponentSetNode;
+          if (oldCS.children.length > 0) {
+            oldCompTarget = oldCS.defaultVariant as ComponentNode;
           }
-          propertyDefs.push({
-            name: pName,
-            displayName: dispName,
-            type: "BOOLEAN",
-            defaultValue: pDef.defaultValue as boolean,
-            controlledLayerName: controlledLayer || undefined,
-          });
         }
-        else if (pDef.type === "VARIANT") {
-          var variantOpts: string[] = [];
-          if (pDef.variantOptions) {
-            variantOpts = pDef.variantOptions as string[];
-          }
-          propertyDefs.push({
-            name: pName,
-            displayName: dispName,
-            type: "VARIANT",
-            defaultValue: pDef.defaultValue as string,
-            variantOptions: variantOpts,
-          });
-        }
-        // Note: TEXT and INSTANCE_SWAP properties are handled by the existing
-        // savedComponentProps / INSTANCE_SWAP logic, not the inference engine.
       }
 
-      console.log("[SG] Component properties: " + propertyDefs.length + " defs found");
-      for (var pdi = 0; pdi < propertyDefs.length; pdi++) {
-        var pd = propertyDefs[pdi];
-        console.log("[SG]   " + pd.type + " '" + pd.displayName + "'" +
+      var oldProperties = readPropertyDefs(
+        oldCompTarget || oldPropNode as any,
+        oldCompTarget
+      );
+      console.log("[SG] Old component properties: " + oldProperties.length);
+
+      // Log details
+      for (var pdi = 0; pdi < newProperties.length; pdi++) {
+        var pd = newProperties[pdi];
+        console.log("[SG]   NEW " + pd.type + " '" + pd.displayName + "'" +
           (pd.controlledLayerName ? " controls '" + pd.controlledLayerName + "'" : "") +
-          (pd.variantOptions ? " options=[" + pd.variantOptions.join(",") + "]" : ""));
+          (pd.variantOptions ? " options=[" + pd.variantOptions.join(",") + "]" : "") +
+          (pd.variantSignatures ? " signatures=" + Object.keys(pd.variantSignatures).length : ""));
+      }
+      for (var pdi2 = 0; pdi2 < oldProperties.length; pdi2++) {
+        var pd2 = oldProperties[pdi2];
+        console.log("[SG]   OLD " + pd2.type + " '" + pd2.displayName + "'" +
+          (pd2.variantOptions ? " options=[" + pd2.variantOptions.join(",") + "]" : ""));
       }
 
-      figma.ui.postMessage({ type: "component-properties-result", properties: propertyDefs });
+      // ★ v13 FIX: Send newProperties AND oldProperties (not just "properties")
+      figma.ui.postMessage({
+        type: "component-properties-result",
+        newProperties: newProperties,
+        oldProperties: oldProperties,
+      });
 
     } catch (err: any) {
-      console.log("[SG] ERREUR get-component-properties:", err);
-      figma.ui.postMessage({ type: "component-properties-result", properties: [] });
+      console.log("[SG] ❌ ERREUR get-component-properties:", err);
+      // ★ v13 FIX: Send correct field names even on error
+      figma.ui.postMessage({
+        type: "component-properties-result",
+        newProperties: [],
+        oldProperties: [],
+      });
     }
   }
-
-
 
 
   // ── Focus sur un node ──
@@ -1128,7 +1312,11 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
     }
   }
 
-  // ── Lancer la conversion ──
+  // ══════════════════════════════════════════════════════════
+  // ★ v13: FIXED — run-conversion handler
+  //   Now reads carryOverRules, booleanRules (fixedValue), variantRules (mode/fixedValue/signatures)
+  //   in the format the UI actually sends them.
+  // ══════════════════════════════════════════════════════════
   if (msg.type === "run-conversion") {
     var oldComponentKey: string = msg.oldComponentKey;
     var newComponentKey: string = msg.newComponentKey;
@@ -1139,19 +1327,33 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
     }[] = msg.mappings;
     var scope: string = msg.scope;
 
+    // ★ v13: Read property rules in the NEW format from the UI
+    var carryOverRules: {
+      newPropertyName: string;
+      oldPropertyName: string;
+      mode: string;  // "carry-over" | "fixed"
+      valueMapping: Record<string, string>;
+      fixedValue?: string | boolean;
+    }[] = msg.carryOverRules || [];
 
-    // --- Property Inference Engine: receive property rules from UI ---
     var booleanRules: {
-      propertyName: string; sourceLayerName: string | null; defaultValue: boolean;
+      propertyName: string;
+      mode: string;  // "per-instance" | "fixed"
+      sourceLayerName: string | null;
+      fixedValue: boolean;
     }[] = msg.booleanRules || [];
+
     var variantRules: {
-      propertyName: string; options: {
-        value: string; sourceLayerName: string | null; isDefault: boolean;
-      }[];
+      propertyName: string;
+      mode: string;  // "auto-detect" | "fixed"
+      fixedValue: string;
+      signatures?: Record<string, { visibleLayerNames: string[]; visibleLayerTypes: string[]; childCount: number }>;
     }[] = msg.variantRules || [];
-    var hasPropertyRules = booleanRules.length > 0 || variantRules.length > 0;
+
+    var hasPropertyRules = carryOverRules.length > 0 || booleanRules.length > 0 || variantRules.length > 0;
     if (hasPropertyRules) {
-      console.log("[SG] Property rules: " + booleanRules.length + " booleans, " + variantRules.length + " variants");
+      console.log("[SG] Property rules: " + carryOverRules.length + " carry-overs, " +
+        booleanRules.length + " booleans, " + variantRules.length + " variants");
     }
 
 
@@ -1167,9 +1369,6 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
     console.log("[SG] Mode: " + (useCloneMode ? "CLONE" : "SWAP") + " | Match: " + (useFingerprintMatch ? "FINGERPRINT" : "KEY"));
 
     try {
-      // ★ Anti-freeze: Only load all pages when we actually need them.
-      // scope="page" + FINGERPRINT mode: only search current page, no index needed → skip!
-      // scope="all" or KEY mode: need all pages for instance search or key-based index.
       var needAllPages = (scope !== "page") || !useFingerprintMatch;
       if (needAllPages) {
         await ensurePagesLoaded();
@@ -1177,18 +1376,12 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
         console.log("[SG] ★ Skipping loadAllPages (scope=page + fingerprint mode)");
       }
 
-      // ★ Perf (Axe 1): Build component-by-key index once for entire conversion
-      // ONLY build in KEY mode (SWAP) — in FINGERPRINT+CLONE mode, the index is
-      // never used directly and scanning 16+ pages causes a 10+ second freeze.
       var _compByKey: Record<string, ComponentNode> = {};
-      // ★ Perf (Axe 2): Reset nested info cache for this conversion run
       _nestedInfoCache = {};
-      // ★ Perf (Axe 3): Reset font load cache for this conversion run
       _fontLoadCache = {};
       _compByKeyGlobal = {};
 
       if (!useFingerprintMatch) {
-        // KEY mode: need the index for direct key lookups
         console.log("[SG] Building component index (KEY mode)...");
         for (var _bpi = 0; _bpi < figma.root.children.length; _bpi++) {
           var _bcomps = figma.root.children[_bpi].findAllWithCriteria({ types: ["COMPONENT"] });
@@ -1214,9 +1407,6 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
           templateInstance = tplNode as InstanceNode;
           console.log("[SG] Template instance found: '" + templateInstance.name + "'");
 
-          // ★ AUTO-UPGRADE: Try to resolve the template's ComponentNode.
-          // Uses fast async resolution (mainComponent + getMainComponentAsync).
-          // NEVER falls back to expensive page-scan fingerprint search.
           var tplResolvedComp = await resolveComponentFromInstanceFast(templateInstance);
           if (tplResolvedComp && tplResolvedComp.key !== oldComponentKey) {
             console.log("[SG] ★ Auto-upgrade CLONE→SWAP: '" + tplResolvedComp.name + "' key=" + tplResolvedComp.key);
@@ -1234,7 +1424,6 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
           return;
         }
       } else {
-        // ★ Search locally FIRST (instant via index) before trying importByKey
         newComp = _compByKey[newComponentKey] || null;
         if (!newComp) {
           newComp = await safeImportComponentByKeyAsync(newComponentKey);
@@ -1252,11 +1441,9 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
       var oldComp: ComponentNode | null = null;
 
       if (useFingerprintMatch) {
-        // Strict fingerprint was encoded in the key
         oldStrictFP = extractFingerprint(oldComponentKey);
         console.log("[SG] Matching by encoded strict fingerprint");
       } else {
-        // Find old component by key → build fingerprints from it (via index)
         oldComp = _compByKey[oldComponentKey] || null;
         if (!oldComp) {
           oldComp = await safeImportComponentByKeyAsync(oldComponentKey);
@@ -1270,14 +1457,10 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
         }
       }
 
-      // Also build relaxed FP from strict FP for matching overridden instances
-      // We can't easily derive relaxed from strict, so we build it when we have the component
       if (!oldRelaxedFP && oldComp) {
         oldRelaxedFP = buildRelaxedFingerprint(oldComp, 2);
       }
 
-      // For fingerprint keys, we also need the relaxed version
-      // Build it from the first matching instance we find
       var needRelaxedFromInstance = useFingerprintMatch && !oldRelaxedFP;
 
       // ── Find all instances of old component ──
@@ -1286,20 +1469,17 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
       interface InstanceInfo { node: InstanceNode; pageName: string; }
       var instances: InstanceInfo[] = [];
 
-      // Also compute the new template's strict FP for exclusion
       var newStrictFP: string | null = null;
       if (templateInstance) {
         newStrictFP = buildStrictFingerprint(templateInstance, 2);
       }
 
-      // ★ Anti-freeze: Compute old component's direct children count for cheap pre-filter
       var _oldChildCount = -1;
       if (oldComp && "children" in oldComp) {
         _oldChildCount = (oldComp as any).children.length;
       } else if (oldStrictFP && oldStrictFP.length > 0) {
-        // Count top-level '|' separators (not inside {}) to estimate direct children count
         var _braceDepth = 0;
-        var _topCount = 1; // at least 1 child if FP is non-empty
+        var _topCount = 1;
         for (var _si = 0; _si < oldStrictFP.length; _si++) {
           var _ch = oldStrictFP.charAt(_si);
           if (_ch === "{") _braceDepth++;
@@ -1316,11 +1496,9 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
         var page = pagesToSearch[p];
         var found = page.findAllWithCriteria({ types: ["INSTANCE"] });
         console.log("[SG] Page '" + page.name + "': " + found.length + " instances to scan");
-        // ★ Anti-freeze: yield right after findAllWithCriteria (heavy sync Figma API call)
         await yieldToUI();
 
         for (var f = 0; f < found.length; f++) {
-          // ★ Anti-freeze: yield every 50 instances to keep Figma responsive
           if (f > 0 && f % 50 === 0) {
             await yieldToUI();
           }
@@ -1328,16 +1506,12 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
           var testInst = found[f];
           var isMatch = false;
 
-          // Don't include the template instance
           if (templateInstance && testInst.id === templateInstance.id) continue;
 
-          // ★ Anti-freeze: Cheap pre-filter by direct children count
-          // Skips instances that can't possibly match without computing expensive fingerprints
           if (_oldChildCount >= 0 && "children" in testInst) {
             if ((testInst as any).children.length !== _oldChildCount) continue;
           }
 
-          // Strategy 1: sync mainComponent.key (try/catch for Web)
           if (!useFingerprintMatch && oldComponentKey) {
             try {
               if (testInst.mainComponent && testInst.mainComponent.key === oldComponentKey) {
@@ -1346,7 +1520,6 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
             } catch (e) { /* Expected on Web+dynamic-page */ }
           }
 
-          // Strategy 2: strict fingerprint match
           if (!isMatch && oldStrictFP) {
             var testStrictFP = buildStrictFingerprint(testInst, 2);
             if (testStrictFP === oldStrictFP) {
@@ -1354,11 +1527,9 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
             }
           }
 
-          // Strategy 3: relaxed fingerprint match (catches overridden instances)
           if (!isMatch && oldRelaxedFP) {
             var testRelaxedFP = buildRelaxedFingerprint(testInst, 2);
             if (testRelaxedFP === oldRelaxedFP) {
-              // Check it's not a NEW component instance (by comparing strict FP)
               if (newStrictFP) {
                 var tsfp = buildStrictFingerprint(testInst, 2);
                 if (tsfp === newStrictFP) {
@@ -1370,7 +1541,6 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
             }
           }
 
-          // Capture relaxed FP from first match if needed
           if (isMatch && needRelaxedFromInstance) {
             oldRelaxedFP = buildRelaxedFingerprint(testInst, 2);
             needRelaxedFromInstance = false;
@@ -1391,9 +1561,7 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
         return;
       }
 
-      // ★ UX: Pre-load all fonts from the NEW component BEFORE the swap loop.
-      // This eliminates async font loading during re-apply, making swap+apply
-      // effectively synchronous so Figma never renders intermediate default state.
+      // ★ UX: Pre-load all fonts from the NEW component
       var _preloadFonts: Record<string, FontName> = {};
       var _fontSource: SceneNode | null = newComp || templateInstance;
       if (_fontSource) {
@@ -1410,7 +1578,6 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
       var pageStats: Record<string, number> = {};
 
       for (var i = 0; i < instances.length; i++) {
-        // ★ Anti-freeze: yield between instances so Figma can process rendering + UI
         if (i > 0) await yieldToUI();
 
         var instance = instances[i].node;
@@ -1424,9 +1591,7 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
           // 1. READ content BEFORE swap
           // ──────────────────────────────────────────────
 
-          // ★ Step 1a: Read ALL component properties (INSTANCE_SWAP, TEXT, BOOLEAN, etc.)
-          // This is the primary strategy for preserving nested library components.
-          // componentProperties gives us the override values including instance swap IDs.
+          // ★ Step 1a: Read ALL component properties
           var savedComponentProps: Record<string, string | boolean> = {};
           var hasInstanceSwapProps = false;
           try {
@@ -1472,10 +1637,8 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
               var nestedInst = sourceNode as InstanceNode;
               var nestedInfo = await resolveNestedComponentInfo(nestedInst);
 
-              // ★ Use compNode from mainComponent first, then fallback to local key search
               var localComp: ComponentNode | null = nestedInfo.compNode;
               if (!localComp && nestedInfo.key) {
-                // compNode was null but we have a key — search via index
                 localComp = _compByKey[nestedInfo.key] || null;
               }
 
@@ -1519,44 +1682,81 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
           }
 
 
-           // --- Step 1c: Read layer visibility for property inference rules ---
+          // ══════════════════════════════════════════════
+          // ★ v13: Step 1c — Property Inference Engine
+          //   Reads old values for carry-over, layer visibility for booleans,
+          //   Jaccard fingerprint matching for variants.
+          // ══════════════════════════════════════════════
           var inferredProps: Record<string, string | boolean> = {};
+
           if (hasPropertyRules) {
-            // BOOLEAN rules: check if source layer is visible
+
+            // ── (A) Carry-Over Rules ──
+            for (var cr = 0; cr < carryOverRules.length; cr++) {
+              var cRule = carryOverRules[cr];
+              if (cRule.mode === "carry-over") {
+                // Read old property value from saved component properties
+                var oldVal = savedComponentProps[cRule.oldPropertyName];
+                if (oldVal !== undefined) {
+                  // Apply value mapping for variants
+                  if (typeof oldVal === "string" && cRule.valueMapping && cRule.valueMapping[oldVal] !== undefined) {
+                    inferredProps[cRule.newPropertyName] = cRule.valueMapping[oldVal];
+                    console.log("[SG]   [" + label + "] CARRY-OVER '" + cRule.newPropertyName + "' = '" + cRule.valueMapping[oldVal] + "' (from old '" + oldVal + "')");
+                  } else {
+                    inferredProps[cRule.newPropertyName] = oldVal;
+                    console.log("[SG]   [" + label + "] CARRY-OVER '" + cRule.newPropertyName + "' = '" + oldVal + "' (direct)");
+                  }
+                } else if (cRule.fixedValue !== undefined) {
+                  // Old property not found → use fixedValue as fallback
+                  inferredProps[cRule.newPropertyName] = cRule.fixedValue;
+                  console.log("[SG]   [" + label + "] CARRY-OVER '" + cRule.newPropertyName + "' = '" + cRule.fixedValue + "' (fallback)");
+                }
+              } else {
+                // Fixed mode
+                if (cRule.fixedValue !== undefined) {
+                  inferredProps[cRule.newPropertyName] = cRule.fixedValue;
+                  console.log("[SG]   [" + label + "] CARRY-OVER (fixed) '" + cRule.newPropertyName + "' = '" + cRule.fixedValue + "'");
+                }
+              }
+            }
+
+            // ── (B) Boolean Toggle Rules ──
             for (var br = 0; br < booleanRules.length; br++) {
               var bRule = booleanRules[br];
-              if (bRule.sourceLayerName) {
+              if (bRule.mode === "per-instance" && bRule.sourceLayerName) {
                 var boolLayer = findLayerByName(instance, bRule.sourceLayerName);
                 if (boolLayer) {
                   inferredProps[bRule.propertyName] = boolLayer.visible;
-                  console.log("[SG]   [" + label + "] BOOL '" + bRule.propertyName + "' = " + boolLayer.visible + " ('" + bRule.sourceLayerName + "' visible=" + boolLayer.visible + ")");
+                  console.log("[SG]   [" + label + "] BOOL '" + bRule.propertyName + "' = " + boolLayer.visible + " ('" + bRule.sourceLayerName + "' visible)");
                 } else {
-                  inferredProps[bRule.propertyName] = bRule.defaultValue;
-                  console.log("[SG]   [" + label + "] BOOL '" + bRule.propertyName + "' = " + bRule.defaultValue + " (layer not found -> default)");
+                  // Layer not found → default to OFF (fixedValue=false typically)
+                  inferredProps[bRule.propertyName] = bRule.fixedValue;
+                  console.log("[SG]   [" + label + "] BOOL '" + bRule.propertyName + "' = " + bRule.fixedValue + " (layer not found)");
                 }
               } else {
-                inferredProps[bRule.propertyName] = bRule.defaultValue;
+                // Fixed mode
+                inferredProps[bRule.propertyName] = bRule.fixedValue;
+                console.log("[SG]   [" + label + "] BOOL (fixed) '" + bRule.propertyName + "' = " + bRule.fixedValue);
               }
             }
-            // VARIANT rules: check conditions in order, first visible match wins
+
+            // ── (C) Variant Rules ──
             for (var vr = 0; vr < variantRules.length; vr++) {
               var vRule = variantRules[vr];
-              var variantSelected: string | null = null;
-              var variantDefault: string | null = null;
-              for (var vo = 0; vo < vRule.options.length; vo++) {
-                var vOpt = vRule.options[vo];
-                if (vOpt.isDefault) variantDefault = vOpt.value;
-                if (vOpt.sourceLayerName && !variantSelected) {
-                  var varLayer = findLayerByName(instance, vOpt.sourceLayerName);
-                  if (varLayer && varLayer.visible) {
-                    variantSelected = vOpt.value;
-                  }
+              if (vRule.mode === "auto-detect" && vRule.signatures) {
+                // ★ v13: Jaccard-based auto-detection
+                var bestMatch = matchBestVariant(instance, vRule.signatures, 0.4);
+                if (bestMatch) {
+                  inferredProps[vRule.propertyName] = bestMatch;
+                  console.log("[SG]   [" + label + "] VARIANT (auto) '" + vRule.propertyName + "' = '" + bestMatch + "'");
+                } else {
+                  inferredProps[vRule.propertyName] = vRule.fixedValue;
+                  console.log("[SG]   [" + label + "] VARIANT (auto→fallback) '" + vRule.propertyName + "' = '" + vRule.fixedValue + "'");
                 }
-              }
-              var finalVariant = variantSelected || variantDefault;
-              if (finalVariant) {
-                inferredProps[vRule.propertyName] = finalVariant;
-                console.log("[SG]   [" + label + "] VARIANT '" + vRule.propertyName + "' = '" + finalVariant + "'" + (variantSelected ? " (condition match)" : " (default)"));
+              } else {
+                // Fixed mode
+                inferredProps[vRule.propertyName] = vRule.fixedValue;
+                console.log("[SG]   [" + label + "] VARIANT (fixed) '" + vRule.propertyName + "' = '" + vRule.fixedValue + "'");
               }
             }
           }
@@ -1582,10 +1782,7 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
           // 3. RE-APPLY content
           // ──────────────────────────────────────────────
 
-          // ★ Step 3a: Re-apply INSTANCE_SWAP component properties.
-          // This uses setProperties() to restore nested library component overrides.
-          // We only apply INSTANCE_SWAP properties (not TEXT/BOOLEAN) because
-          // text content is handled separately in the per-mapping loop.
+          // ★ Step 3a: Re-apply INSTANCE_SWAP component properties
           if (hasInstanceSwapProps) {
             try {
               var targetProps = targetInstance.componentProperties;
@@ -1593,7 +1790,6 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
               var swapCount = 0;
               for (var spName in savedComponentProps) {
                 if (savedComponentProps.hasOwnProperty(spName)) {
-                  // Only apply if the target also has this property as INSTANCE_SWAP
                   if (targetProps[spName] && targetProps[spName].type === "INSTANCE_SWAP") {
                     swapPropsToApply[spName] = savedComponentProps[spName];
                     swapCount++;
@@ -1609,30 +1805,31 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
             }
           }
 
-          // --- Step 3a.2: Apply inferred property rules (booleans + variants) ---
-          if (hasPropertyRules && Object.keys(inferredProps).length > 0) {
+          // ★ v13: Step 3a.2 — Apply ALL inferred property rules (carry-over + boolean + variant)
+          if (Object.keys(inferredProps).length > 0) {
             try {
               var tgtAllProps = targetInstance.componentProperties;
               var propsToSet: Record<string, string | boolean> = {};
               var inferCount = 0;
               for (var ipName in inferredProps) {
                 if (inferredProps.hasOwnProperty(ipName)) {
-                  // Only apply if the target instance actually has this property
                   if (tgtAllProps[ipName]) {
                     propsToSet[ipName] = inferredProps[ipName];
                     inferCount++;
+                  } else {
+                    console.log("[SG]   [" + label + "] ⚠ Property '" + ipName + "' not found on target — skipping");
                   }
                 }
               }
               if (inferCount > 0) {
                 targetInstance.setProperties(propsToSet);
-                console.log("[SG]   [" + label + "] Applied " + inferCount + " inferred property rules");
+                console.log("[SG]   [" + label + "] ✅ Applied " + inferCount + " inferred properties");
               }
             } catch (e) {
-              console.log("[SG]   [" + label + "] Inferred properties setProperties failed: " + e);
+              console.log("[SG]   [" + label + "] ⚠ Inferred properties setProperties failed: " + e);
             }
           }
-          
+
           // Step 3b: Re-apply per-mapping content
           for (var m2 = 0; m2 < mappings.length; m2++) {
             var map = mappings[m2];
@@ -1649,11 +1846,9 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
               await safeLoadFontsAndWriteText(targetNode as TextNode, content.value, label);
             }
             else if (content.type === "instance") {
-              // ★ Nested component handling — swapComponent only (no insertChild!)
               if (targetNode.type === "INSTANCE") {
                 var targetInst = targetNode as InstanceNode;
                 if (content.localComp) {
-                  // LOCAL component found → swapComponent (instant, no timeout)
                   try {
                     targetInst.swapComponent(content.localComp);
                     console.log("[SG]   [" + label + "] ✅ Nested swap → " + content.localComp.name);
@@ -1661,12 +1856,9 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
                     console.log("[SG]   [" + label + "] ⚠ Nested swapComponent failed: " + e);
                   }
                 } else {
-                  // LIBRARY component — cannot swap without ComponentNode
-                  // Best effort: apply fills to preserve colors/images
                   console.log("[SG]   [" + label + "] ⚠ Library nested '" + targetNode.name + "' — applying fills only");
                 }
               }
-              // Apply fills on the target (whether swapped or not)
               if (content.directFills && content.directFills.length > 0 && "fills" in targetNode) {
                 try { (targetNode as GeometryMixin).fills = content.directFills; } catch (e) { }
               }
@@ -1710,7 +1902,6 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
       }
 
       console.log("[SG] === FIN: " + converted + "/" + totalInstances + " converties ===");
-      // ★ Clean up module-level index to free memory
       _compByKeyGlobal = {};
       var pages: { name: string; count: number }[] = [];
       for (var pName in pageStats) {
