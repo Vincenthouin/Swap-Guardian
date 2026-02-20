@@ -854,6 +854,31 @@ function replaceWithClone(
   return newInst;
 }
 
+
+// --- Property inference helpers ---
+
+// Walk a component's children to find which layer has its "visible" property
+// linked to a given component property name via componentPropertyReferences.
+function findBooleanControlledLayer(comp: ComponentNode | InstanceNode, propertyName: string): string | null {
+  function walk(node: SceneNode): string | null {
+    try {
+      var refs = (node as any).componentPropertyReferences;
+      if (refs && refs.visible === propertyName) {
+        return node.name;
+      }
+    } catch (_e) { /* not all nodes have componentPropertyReferences */ }
+    if ("children" in node) {
+      var kids = (node as any).children as SceneNode[];
+      for (var i = 0; i < kids.length; i++) {
+        var found = walk(kids[i]);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+  return walk(comp);
+}
+
 // ─── Message handler ────────────────────────────────────
 
 figma.ui.onmessage = async function (msg: Record<string, any>) {
@@ -981,6 +1006,116 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
     }
   }
 
+  // -- Analyse des properties du nouveau composant --
+  if (msg.type === "get-component-properties") {
+    try {
+      var propNodeId: string = msg.nodeId;
+      var propNode = await figma.getNodeByIdAsync(propNodeId);
+      if (!propNode) {
+        figma.ui.postMessage({ type: "component-properties-result", properties: [] });
+        return;
+      }
+
+      // Resolve the ComponentNode or ComponentSetNode
+      var compTarget: ComponentNode | null = null;
+      var compSetTarget: ComponentSetNode | null = null;
+
+      if (propNode.type === "COMPONENT") {
+        compTarget = propNode as ComponentNode;
+        if (compTarget.parent && compTarget.parent.type === "COMPONENT_SET") {
+          compSetTarget = compTarget.parent as ComponentSetNode;
+        }
+      } else if (propNode.type === "INSTANCE") {
+        var instPropNode = propNode as InstanceNode;
+        try {
+          var mcProp = await safeGetMainComponentAsync(instPropNode);
+          if (mcProp) {
+            compTarget = mcProp;
+            if (mcProp.parent && mcProp.parent.type === "COMPONENT_SET") {
+              compSetTarget = mcProp.parent as ComponentSetNode;
+            }
+          }
+        } catch (_e) { }
+      } else if (propNode.type === "COMPONENT_SET") {
+        compSetTarget = propNode as ComponentSetNode;
+        if (compSetTarget.children.length > 0) {
+          compTarget = compSetTarget.defaultVariant as ComponentNode;
+        }
+      }
+
+      // Read componentPropertyDefinitions from the ComponentSet (if exists) or Component
+      var defSource: (ComponentSetNode | ComponentNode | null) = compSetTarget || compTarget;
+      if (!defSource) {
+        figma.ui.postMessage({ type: "component-properties-result", properties: [] });
+        return;
+      }
+
+      var rawDefs = defSource.componentPropertyDefinitions;
+      var propertyDefs: {
+        name: string; displayName: string; type: string;
+        defaultValue: string | boolean; controlledLayerName?: string;
+        variantOptions?: string[];
+      }[] = [];
+
+      for (var pName in rawDefs) {
+        if (!rawDefs.hasOwnProperty(pName)) continue;
+        var pDef = rawDefs[pName];
+
+        // Clean up display name (remove Figma's #nodeId suffix)
+        var dispName = pName;
+        var hashIdx = pName.indexOf("#");
+        if (hashIdx > 0) dispName = pName.substring(0, hashIdx);
+
+        if (pDef.type === "BOOLEAN") {
+          // Find which layer this boolean controls via componentPropertyReferences
+          var controlledLayer: string | null = null;
+          if (compTarget) {
+            controlledLayer = findBooleanControlledLayer(compTarget, pName);
+          }
+          propertyDefs.push({
+            name: pName,
+            displayName: dispName,
+            type: "BOOLEAN",
+            defaultValue: pDef.defaultValue as boolean,
+            controlledLayerName: controlledLayer || undefined,
+          });
+        }
+        else if (pDef.type === "VARIANT") {
+          var variantOpts: string[] = [];
+          if (pDef.variantOptions) {
+            variantOpts = pDef.variantOptions as string[];
+          }
+          propertyDefs.push({
+            name: pName,
+            displayName: dispName,
+            type: "VARIANT",
+            defaultValue: pDef.defaultValue as string,
+            variantOptions: variantOpts,
+          });
+        }
+        // Note: TEXT and INSTANCE_SWAP properties are handled by the existing
+        // savedComponentProps / INSTANCE_SWAP logic, not the inference engine.
+      }
+
+      console.log("[SG] Component properties: " + propertyDefs.length + " defs found");
+      for (var pdi = 0; pdi < propertyDefs.length; pdi++) {
+        var pd = propertyDefs[pdi];
+        console.log("[SG]   " + pd.type + " '" + pd.displayName + "'" +
+          (pd.controlledLayerName ? " controls '" + pd.controlledLayerName + "'" : "") +
+          (pd.variantOptions ? " options=[" + pd.variantOptions.join(",") + "]" : ""));
+      }
+
+      figma.ui.postMessage({ type: "component-properties-result", properties: propertyDefs });
+
+    } catch (err: any) {
+      console.log("[SG] ERREUR get-component-properties:", err);
+      figma.ui.postMessage({ type: "component-properties-result", properties: [] });
+    }
+  }
+
+
+
+
   // ── Focus sur un node ──
   if (msg.type === "focus-node" && msg.nodeId) {
     var focusNode = await figma.getNodeByIdAsync(msg.nodeId);
@@ -1003,6 +1138,22 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
       targetPath: string[]; targetIndexPath: number[]; layerType: string;
     }[] = msg.mappings;
     var scope: string = msg.scope;
+
+
+    // --- Property Inference Engine: receive property rules from UI ---
+    var booleanRules: {
+      propertyName: string; sourceLayerName: string | null; defaultValue: boolean;
+    }[] = msg.booleanRules || [];
+    var variantRules: {
+      propertyName: string; options: {
+        value: string; sourceLayerName: string | null; isDefault: boolean;
+      }[];
+    }[] = msg.variantRules || [];
+    var hasPropertyRules = booleanRules.length > 0 || variantRules.length > 0;
+    if (hasPropertyRules) {
+      console.log("[SG] Property rules: " + booleanRules.length + " booleans, " + variantRules.length + " variants");
+    }
+
 
     console.log("[SG] === DÉBUT CONVERSION ===");
     console.log("[SG] oldKey:", oldComponentKey.substring(0, 80));
@@ -1367,6 +1518,50 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
             }
           }
 
+
+           // --- Step 1c: Read layer visibility for property inference rules ---
+          var inferredProps: Record<string, string | boolean> = {};
+          if (hasPropertyRules) {
+            // BOOLEAN rules: check if source layer is visible
+            for (var br = 0; br < booleanRules.length; br++) {
+              var bRule = booleanRules[br];
+              if (bRule.sourceLayerName) {
+                var boolLayer = findLayerByName(instance, bRule.sourceLayerName);
+                if (boolLayer) {
+                  inferredProps[bRule.propertyName] = boolLayer.visible;
+                  console.log("[SG]   [" + label + "] BOOL '" + bRule.propertyName + "' = " + boolLayer.visible + " ('" + bRule.sourceLayerName + "' visible=" + boolLayer.visible + ")");
+                } else {
+                  inferredProps[bRule.propertyName] = bRule.defaultValue;
+                  console.log("[SG]   [" + label + "] BOOL '" + bRule.propertyName + "' = " + bRule.defaultValue + " (layer not found -> default)");
+                }
+              } else {
+                inferredProps[bRule.propertyName] = bRule.defaultValue;
+              }
+            }
+            // VARIANT rules: check conditions in order, first visible match wins
+            for (var vr = 0; vr < variantRules.length; vr++) {
+              var vRule = variantRules[vr];
+              var variantSelected: string | null = null;
+              var variantDefault: string | null = null;
+              for (var vo = 0; vo < vRule.options.length; vo++) {
+                var vOpt = vRule.options[vo];
+                if (vOpt.isDefault) variantDefault = vOpt.value;
+                if (vOpt.sourceLayerName && !variantSelected) {
+                  var varLayer = findLayerByName(instance, vOpt.sourceLayerName);
+                  if (varLayer && varLayer.visible) {
+                    variantSelected = vOpt.value;
+                  }
+                }
+              }
+              var finalVariant = variantSelected || variantDefault;
+              if (finalVariant) {
+                inferredProps[vRule.propertyName] = finalVariant;
+                console.log("[SG]   [" + label + "] VARIANT '" + vRule.propertyName + "' = '" + finalVariant + "'" + (variantSelected ? " (condition match)" : " (default)"));
+              }
+            }
+          }
+
+
           // ──────────────────────────────────────────────
           // 2. SWAP or CLONE
           // ──────────────────────────────────────────────
@@ -1414,6 +1609,30 @@ figma.ui.onmessage = async function (msg: Record<string, any>) {
             }
           }
 
+          // --- Step 3a.2: Apply inferred property rules (booleans + variants) ---
+          if (hasPropertyRules && Object.keys(inferredProps).length > 0) {
+            try {
+              var tgtAllProps = targetInstance.componentProperties;
+              var propsToSet: Record<string, string | boolean> = {};
+              var inferCount = 0;
+              for (var ipName in inferredProps) {
+                if (inferredProps.hasOwnProperty(ipName)) {
+                  // Only apply if the target instance actually has this property
+                  if (tgtAllProps[ipName]) {
+                    propsToSet[ipName] = inferredProps[ipName];
+                    inferCount++;
+                  }
+                }
+              }
+              if (inferCount > 0) {
+                targetInstance.setProperties(propsToSet);
+                console.log("[SG]   [" + label + "] Applied " + inferCount + " inferred property rules");
+              }
+            } catch (e) {
+              console.log("[SG]   [" + label + "] Inferred properties setProperties failed: " + e);
+            }
+          }
+          
           // Step 3b: Re-apply per-mapping content
           for (var m2 = 0; m2 < mappings.length; m2++) {
             var map = mappings[m2];

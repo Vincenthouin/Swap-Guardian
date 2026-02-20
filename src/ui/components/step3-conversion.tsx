@@ -2,20 +2,21 @@ import { useState, useCallback } from "react";
 import {
   ChevronLeft, Play, FileText, FolderOpen, Check, AlertCircle,
   ArrowRight, RefreshCw, Sparkles, Component, Crosshair,
-  ChevronDown, ChevronUp, Palette,
+  ChevronDown, ChevronUp, Palette, ToggleLeft, Layers,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Progress } from "./ui/progress";
 import { LayerIcon } from "./layer-icon";
 import { useI18n } from "./i18n";
-import type { MappingEntry, ComponentInfo, ConversionResult } from "./types";
+import type { MappingEntry, ComponentInfo, ConversionResult, PropertyRules } from "./types";
 
 interface Step3Props {
   stepTitle: string;
   oldComponent: ComponentInfo;
   newComponent: ComponentInfo;
   mappings: MappingEntry[];
+  propertyRules: PropertyRules;
   conversionState: "idle" | "running" | "complete";
   progress: number;
   progressInfo: { current: number; total: number };
@@ -29,7 +30,7 @@ interface Step3Props {
 
 export function Step3Conversion({
   stepTitle,
-  oldComponent, newComponent, mappings,
+  oldComponent, newComponent, mappings, propertyRules,
   conversionState, progress, progressInfo, result, conversionError,
   onRunConversion, onFocusNode, onBack, onReset,
 }: Step3Props) {
@@ -48,6 +49,8 @@ export function Step3Conversion({
     [onFocusNode]
   );
 
+  const hasPropertyRules = propertyRules.booleans.length > 0 || propertyRules.variants.length > 0;
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
       {/* Scrollable content */}
@@ -57,7 +60,7 @@ export function Step3Conversion({
         <div className="flex flex-col gap-5 pb-4">
           {conversionState === "idle" && (
             <>
-              {/* Instructions — style bleu (comme étape 1) */}
+              {/* Instructions */}
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3.5">
                 <div className="flex gap-2.5">
                   <Sparkles className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
@@ -99,7 +102,7 @@ export function Step3Conversion({
                       </div>
                       <ArrowRight className="w-3 h-3 text-neutral-300 shrink-0" />
                       <div className="flex-1 min-w-0 text-right">
-                        <span className="text-xs text-emerald-600 truncate block">{m.targetLayer?.name || "—"}</span>
+                        <span className="text-xs text-emerald-600 truncate block">{m.targetLayer?.name || "\u2014"}</span>
                         {m.targetLayer?.parentComponentName && (
                           <span className="text-[10px] text-violet-600 truncate block">
                             {t("inComponent")} {m.targetLayer.parentComponentName}
@@ -108,6 +111,45 @@ export function Step3Conversion({
                       </div>
                     </div>
                   ))}
+
+                  {/* Property Rules Summary */}
+                  {hasPropertyRules && propertyRules.booleans.length > 0 && (
+                    <div className="px-3 py-2 bg-blue-50/50">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <ToggleLeft className="w-3 h-3 text-blue-500" />
+                        <span className="text-[10px] text-blue-700">{t("togglesSummary")}</span>
+                      </div>
+                      {propertyRules.booleans.map((b) => (
+                        <div key={b.propertyName} className="flex items-center gap-1.5 ml-[18px] py-0.5">
+                          <span className="text-[10px] text-neutral-900">{b.displayName}</span>
+                          <span className="text-[10px] text-neutral-500">
+                            {b.sourceLayerName
+                              ? `\u2190 ${t("visibilityOf", { name: b.sourceLayerName })}`
+                              : t("defaultValueLabel", { value: b.defaultValue ? "ON" : "OFF" })}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {hasPropertyRules && propertyRules.variants.length > 0 && (
+                    <div className="px-3 py-2 bg-amber-50/50">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <Layers className="w-3 h-3 text-amber-500" />
+                        <span className="text-[10px] text-amber-700">{t("variantsSummary")}</span>
+                      </div>
+                      {propertyRules.variants.map((v) => {
+                        const def = v.options.find((o) => o.isDefault);
+                        return (
+                          <div key={v.propertyName} className="flex items-center gap-1.5 ml-[18px] py-0.5">
+                            <span className="text-[10px] text-neutral-900">{v.displayName}</span>
+                            <span className="text-[10px] text-neutral-500">
+                              {t("defaultLabel")} : {def?.value || "\u2014"}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -144,7 +186,7 @@ export function Step3Conversion({
 
               {/* Options */}
               <div>
-                <label className="text-xs text-neutral-500 mb-2 block">{t("options")}</label>
+                <label className="text-xs text-neutral-500 mb-2 block">{t("optionsLabel")}</label>
                 <label
                   className={`flex items-center gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
                     preserveColors ? "border-neutral-900 bg-neutral-50" : "border-neutral-200 hover:border-neutral-300"
@@ -231,7 +273,7 @@ export function Step3Conversion({
                 </div>
               </div>
 
-              {/* Errors BEFORE page detail */}
+              {/* Errors */}
               {result.errors > 0 && result.failedInstances.length > 0 && (
                 <div>
                   <button onClick={() => setErrorsExpanded(!errorsExpanded)} className="flex items-center justify-between w-full mb-2 cursor-pointer group">
@@ -284,7 +326,7 @@ export function Step3Conversion({
                 </div>
               )}
 
-              {/* Pages — AFTER errors */}
+              {/* Pages */}
               {result.pages.length > 0 && (
                 <div>
                   <label className="text-xs text-neutral-500 mb-2 block">{t("pageDetail")}</label>
@@ -308,7 +350,7 @@ export function Step3Conversion({
         </div>
       </div>
 
-      {/* Fixed footer — conditional per state */}
+      {/* Fixed footer */}
       {conversionState === "idle" && (
         <div className="shrink-0 px-4 py-3 border-t border-neutral-200 bg-white flex gap-2">
           <Button variant="outline" className="flex-1" onClick={onBack}>

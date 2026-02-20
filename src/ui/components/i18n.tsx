@@ -15,6 +15,8 @@ const translations = {
   step1Desc:          { fr: "Sélectionner les layers de l'ancien composant", en: "Select layers from the old component" },
   step2Label:         { fr: "Mapping",     en: "Mapping" },
   step2Desc:          { fr: "Associer les layers au nouveau composant", en: "Map layers to the new component" },
+  step2bLabel:        { fr: "Properties",  en: "Properties" },
+  step2bDesc:         { fr: "Configurer toggles et variants", en: "Configure toggles and variants" },
   step3Label:         { fr: "Conversion",  en: "Conversion" },
   step3Desc:          { fr: "Remplacer toutes les instances", en: "Replace all instances" },
 
@@ -47,6 +49,42 @@ const translations = {
   noCompatibleLayer:  { fr: "Aucun layer compatible",    en: "No compatible layer" },
   alreadyMapped:      { fr: "associé",   en: "mapped" },
 
+  // ─── Step 2b — Property Inference Engine ───
+  step2bInstruction:  { fr: "Le nouveau composant possède des propriétés configurables. Swap Guardian a pré-rempli les règles automatiquement — vérifiez et ajustez si nécessaire.", en: "The new component has configurable properties. Swap Guardian pre-filled the rules automatically — review and adjust as needed." },
+  loadingProperties:  { fr: "Analyse des propriétés…", en: "Analyzing properties…" },
+  noProperties:       { fr: "Aucune propriété configurable", en: "No configurable properties" },
+  noPropertiesDesc:   { fr: "Le nouveau composant n'a pas de propriétés supplémentaires à configurer. Vous pouvez passer directement à la conversion.", en: "The new component has no additional properties to configure. You can proceed to conversion." },
+
+  // Section A — Carry-over
+  carryOverSection:   { fr: "Reportées automatiquement", en: "Carried over automatically" },
+  carryOverExplanation: { fr: "La propriété « {old} » sera reportée telle quelle de chaque instance source vers « {new} ».", en: "The \"{old}\" property will be carried over as-is from each source instance to \"{new}\"." },
+  switchToFixed:      { fr: "Passer en valeur fixe", en: "Switch to fixed value" },
+  switchToCarryOver:  { fr: "Reporter depuis l'ancien", en: "Carry over from old" },
+  showValueMapping:   { fr: "Voir le mapping des valeurs", en: "Show value mapping" },
+  hideValueMapping:   { fr: "Masquer le mapping", en: "Hide value mapping" },
+
+  // Section B — Toggles
+  togglesSection:     { fr: "Toggles (nouveaux)", en: "Toggles (new)" },
+  modePerInstance:    { fr: "Par instance", en: "Per instance" },
+  modeFixed:          { fr: "Valeur fixe", en: "Fixed value" },
+  activateWhenVisible:{ fr: "Activer quand ce layer est visible :", en: "Enable when this layer is visible:" },
+  noLayerSelected:    { fr: "Aucun layer sélectionné", en: "No layer selected" },
+  noMatchDefaultOff:  { fr: "Aucun layer correspondant trouvé — sera OFF par défaut pour toutes les instances.", en: "No matching layer found — will default to OFF for all instances." },
+  boolExplanation:    { fr: "Pour chaque instance : si « {layer} » est visible → {prop} = ON, sinon {prop} = OFF", en: "For each instance: if \"{layer}\" is visible → {prop} = ON, else {prop} = OFF" },
+  fixedValueLabel:    { fr: "Valeur fixe", en: "Fixed value" },
+
+  // Section C — Variants
+  variantsSection:    { fr: "Variants (nouveaux)", en: "Variants (new)" },
+  modeAutoDetect:     { fr: "Auto-detect", en: "Auto-detect" },
+  autoDetected:       { fr: "Auto", en: "Auto" },
+  autoDetectExplanation: { fr: "Swap Guardian analysera la structure de chaque instance pour choisir automatiquement la meilleure option.", en: "Swap Guardian will analyze each instance's structure to automatically choose the best option." },
+  autoDetectFallback: { fr: "Si aucun match fiable : « {value} » sera utilisé.", en: "If no reliable match: \"{value}\" will be used." },
+  autoDetectUnavailable: { fr: "Auto-detect non disponible pour ce variant (aucune signature structurelle). Utilisez une valeur fixe.", en: "Auto-detect unavailable for this variant (no structural signatures). Use a fixed value." },
+  fallbackValue:      { fr: "Valeur de repli", en: "Fallback value" },
+  options:            { fr: "options", en: "options" },
+  preFilled:          { fr: "Pré-rempli", en: "Pre-filled" },
+  defaultLabel:       { fr: "défaut", en: "default" },
+
   // ─── Step 3 ───
   step3Instruction:   { fr: "Vérifiez le récapitulatif des associations puis lancez la conversion. Toutes les instances de l'ancien composant seront remplacées automatiquement.", en: "Review the mapping summary, then launch the conversion. All instances of the old component will be replaced automatically." },
   summary:            { fr: "Récapitulatif",          en: "Summary" },
@@ -55,7 +93,7 @@ const translations = {
   currentPageOnly:    { fr: "Page courante uniquement", en: "Current page only" },
   allDocument:        { fr: "Tout le document",en: "Entire document" },
   allPages:           { fr: "Toutes les pages",en: "All pages" },
-  options:            { fr: "Options",         en: "Options" },
+  optionsLabel:       { fr: "Options",         en: "Options" },
   preserveColors:     { fr: "Conserver les couleurs du composant source", en: "Preserve source component colors" },
   preserveColorsOn:   { fr: "Les couleurs des instances source seront conservées", en: "Source instance colors will be preserved" },
   preserveColorsOff:  { fr: "Les couleurs du nouveau composant seront appliquées", en: "New component colors will be applied" },
@@ -75,6 +113,16 @@ const translations = {
   failedInstances:    { fr: "Instances en erreur", en: "Failed instances" },
   newConversion:      { fr: "Nouvelle conversion", en: "New conversion" },
   selectInCanvas:     { fr: "Sélectionner dans le canvas", en: "Select in canvas" },
+
+  // Step 3 — Property rules summary
+  carryOverSummary:   { fr: "Properties reportées", en: "Carried over" },
+  togglesSummary:     { fr: "Toggles", en: "Toggles" },
+  variantsSummary:    { fr: "Variants", en: "Variants" },
+  visibilityOf:       { fr: "visibilité de « {name} »", en: "visibility of \"{name}\"" },
+  defaultValueSummary:{ fr: "= {value} (défaut)", en: "= {value} (default)" },
+  carryOverFrom:      { fr: "reporté de « {name} »", en: "carried from \"{name}\"" },
+  fixedAt:            { fr: "fixé à « {value} »", en: "fixed at \"{value}\"" },
+  autoDetectMode:     { fr: "auto-detect (repli : {value})", en: "auto-detect (fallback: {value})" },
 } as const;
 
 type TranslationKey = keyof typeof translations;
